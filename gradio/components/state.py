@@ -3,22 +3,28 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Callable
 from copy import deepcopy
-from typing import Any, Callable
+from typing import Any
 
 from gradio_client.documentation import document
 
 from gradio.components.base import Component
+from gradio.events import Events
+
+
+def default_delete_callback(x: Any) -> None:
+    pass
 
 
 @document()
 class State(Component):
-    EVENTS = []
+    EVENTS = [Events.change]
     """
     Special hidden component that stores session state across runs of the demo by the
-    same user. The value of the State variable is cleared when the user refreshes the page.
+    same user. Can attach .change listeners that trigger when the state changes.
     Demos: interface_state, blocks_simple_squares, state_cleanup
-    Guides: real-time-speech-recognition
+    Guides: interface-state, state-in-blocks
     """
 
     allow_string_shortcut = False
@@ -34,24 +40,25 @@ class State(Component):
         """
         Parameters:
             value: the initial value (of arbitrary type) of the state. The provided argument is deepcopied. If a callable is provided, the function will be called whenever the app loads to set the initial value of the state.
-            render: has no effect, but is included for consistency with other components.
-            time_to_live: The number of seconds the state should be stored for after it is created or updated. If None, the state will be stored indefinitely. Gradio automatically deletes state variables after a user closes the browser tab or refreshes the page, so this is useful for clearing state for potentially long running sessions.
-            delete_callback: A function that is called when the state is deleted. The function should take the state value as an argument.
+            render: should always be True, is included for consistency with other components.
+            time_to_live: the number of seconds the state should be stored for after it is created or updated. If None, the state will be stored indefinitely. Gradio automatically deletes state variables after a user closes the browser tab or refreshes the page, so this is useful for clearing state for potentially long running sessions.
+            delete_callback: a function that is called when the state is deleted. The function should take the state value as an argument.
         """
         self.time_to_live = self.time_to_live = (
             math.inf if time_to_live is None else time_to_live
         )
-        self.delete_callback = delete_callback or (lambda a: None)  # noqa: ARG005
+        self.delete_callback = delete_callback or default_delete_callback  # noqa: ARG005
         try:
-            self.value = deepcopy(value)
+            value = deepcopy(value)
         except TypeError as err:
             raise TypeError(
                 f"The initial value of `gr.State` must be able to be deepcopied. The initial value of type {type(value)} cannot be deepcopied."
             ) from err
-        super().__init__(value=self.value, render=render)
+        super().__init__(value=value, render=render)
+        self.value = value
 
     @property
-    def stateful(self):
+    def stateful(self) -> bool:
         return True
 
     def preprocess(self, payload: Any) -> Any:
@@ -84,3 +91,12 @@ class State(Component):
     @property
     def skip_api(self):
         return True
+
+    def get_config(self):  # type: ignore[override]
+        config = super().get_config()
+        del config["value"]
+        return config
+
+    def breaks_grouping(self) -> bool:
+        """State components should not break wrapper grouping chains."""
+        return False

@@ -1,25 +1,32 @@
 <script lang="ts">
-	export let elem_id = "";
-	export let elem_classes: string[] = [];
-	export let visible = true;
+	import { Gradio } from "@gradio/utils";
+
+	const props = $props();
+	const gradio = new Gradio<{}, {}>(props);
 </script>
 
 <div
-	id={elem_id}
-	class="gr-group {elem_classes.join(' ')}"
-	class:hide={!visible}
+	id={gradio.shared.elem_id}
+	class="gr-group {gradio.shared.elem_classes?.join(' ') || ''}"
+	class:hide={gradio.shared.visible === "hidden"}
 >
 	<div
-		class="styler"
-		style:--block-radius="0px"
-		style:--block-border-width="0px"
-		style:--layout-gap="1px"
-		style:--form-gap-width="1px"
-		style:--button-border-width="0px"
-		style:--button-large-radius="0px"
-		style:--button-small-radius="0px"
+		id={gradio.shared.elem_id}
+		class="gr-group {gradio.shared.elem_classes?.join(' ') || ''}"
+		class:hide={gradio.shared.visible === "hidden"}
 	>
-		<slot />
+		<div
+			class="styler"
+			style:--block-radius="0px"
+			style:--block-border-width="0px"
+			style:--layout-gap="1px"
+			style:--form-gap-width="1px"
+			style:--button-border-width="0px"
+			style:--button-large-radius="0px"
+			style:--button-small-radius="0px"
+		>
+			{@render props.children?.()}
+		</div>
 	</div>
 </div>
 
@@ -36,6 +43,9 @@
 	div > :global(*:not(.absolute)) {
 		border: none;
 		border-radius: 0;
+	}
+	div > :global(.gr-accordion:not(.absolute)) {
+		border: none !important;
 	}
 	.hide {
 		display: none;

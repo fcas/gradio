@@ -1,9 +1,12 @@
 import { join } from "path";
+import { pathToFileURL } from "url";
 import * as fs from "fs";
+
 import { createServer, createLogger } from "vite";
+import type { PreprocessorGroup } from "svelte/compiler";
+
 import { plugins, make_gradio_plugin } from "./plugins";
 import { examine_module } from "./index";
-import type { PreprocessorGroup } from "svelte/compiler";
 
 const vite_messages_to_ignore = [
 	"Default and named imports from CSS files are deprecated.",
@@ -16,6 +19,13 @@ logger.warn = (msg, options) => {
 	if (vite_messages_to_ignore.some((m) => msg.includes(m))) return;
 
 	originalWarning(msg, options);
+};
+
+const originalError = logger.error;
+
+logger.error = (msg, options) => {
+	if (msg && msg.includes("Pre-transform error")) return;
+	originalError(msg, options);
 };
 
 interface ServerOptions {
@@ -36,7 +46,7 @@ export async function create_server({
 	python_path
 }: ServerOptions): Promise<void> {
 	process.env.gradio_mode = "dev";
-	const [imports, config] = await generate_imports(
+	const [imports, config, runtimes] = await generate_imports(
 		component_dir,
 		root_dir,
 		python_path
@@ -57,13 +67,16 @@ export async function create_server({
 					allow: [root_dir, component_dir]
 				}
 			},
+			optimizeDeps: config.optimizeDeps,
+			cacheDir: join(component_dir, "frontend", "node_modules", ".vite"),
 			plugins: [
 				...plugins(config),
 				make_gradio_plugin({
-					mode: "dev",
 					backend_port,
 					svelte_dir,
-					imports
+					component_dir,
+					imports,
+					runtimes
 				})
 			]
 		});
@@ -101,7 +114,7 @@ function find_frontend_folders(start_path: string): string[] {
 
 function to_posix(_path: string): string {
 	const isExtendedLengthPath = /^\\\\\?\\/.test(_path);
-	const hasNonAscii = /[^\u0000-\u0080]+/.test(_path); // eslint-disable-line no-control-regex
+	const hasNonAscii = /[^\u0000-\u0080]+/.test(_path);
 
 	if (isExtendedLengthPath || hasNonAscii) {
 		return _path;
@@ -116,13 +129,17 @@ export interface ComponentConfig {
 		preprocess: PreprocessorGroup[];
 		extensions?: string[];
 	};
+	build: {
+		target: string | string[];
+	};
+	optimizeDeps: object;
 }
 
 async function generate_imports(
 	component_dir: string,
 	root: string,
 	python_path: string
-): Promise<[string, ComponentConfig]> {
+): Promise<[string, ComponentConfig, string]> {
 	const components = find_frontend_folders(component_dir);
 
 	const component_entries = components.flatMap((component) => {
@@ -134,10 +151,16 @@ async function generate_imports(
 		);
 	}
 
-	let component_config = {
+	let component_config: ComponentConfig = {
 		plugins: [],
 		svelte: {
 			preprocess: []
+		},
+		build: {
+			target: []
+		},
+		optimizeDeps: {
+			exclude: ["svelte", "svelte/*"]
 		}
 	};
 
@@ -148,11 +171,14 @@ async function generate_imports(
 				fs.existsSync(join(component.frontend_dir, "gradio.config.js"))
 			) {
 				const m = await import(
-					join(component.frontend_dir, "gradio.config.js")
+					pathToFileURL(join(component.frontend_dir, "gradio.config.js")).href
 				);
 
 				component_config.plugins = m.default.plugins || [];
 				component_config.svelte.preprocess = m.default.svelte?.preprocess || [];
+				component_config.build.target = m.default.build?.target || "modules";
+				component_config.optimizeDeps =
+					m.default.optimizeDeps || component_config.optimizeDeps;
 			} else {
 			}
 		})
@@ -163,7 +189,7 @@ async function generate_imports(
 			fs.readFileSync(join(component.frontend_dir, "package.json"), "utf-8")
 		);
 
-		const exports: Record<string, string | undefined> = {
+		const exports: Record<string, any | undefined> = {
 			component: pkg.exports["."],
 			example: pkg.exports["./example"]
 		};
@@ -174,17 +200,22 @@ async function generate_imports(
 			);
 
 		const example = exports.example
-			? `example: () => import("${to_posix(
-					join(component.frontend_dir, exports.example)
+			? `example: () => import("/@fs/${to_posix(
+					join(component.frontend_dir, exports.example.gradio)
 				)}"),\n`
 			: "";
 		return `${acc}"${component.component_class_id}": {
 			${example}
-			component: () => import("${to_posix(
-				join(component.frontend_dir, exports.component)
-			)}")
+			component: () => import("/@fs/${to_posix(
+				join(component.frontend_dir, exports.component.gradio)
+			)}"),
+
 			},\n`;
 	}, "");
 
-	return [`{${imports}}`, component_config];
+	const runtimes = component_entries.reduce((acc, component) => {
+		return `${acc}"${component.component_class_id}": import("svelte"),\n`;
+	}, "");
+
+	return [`{${imports}}`, component_config, `{${runtimes}}`];
 }

@@ -1,10 +1,16 @@
-<script context="module" lang="ts">
-	import { tick } from "svelte";
+<script module lang="ts">
+	import { tick, untrack } from "svelte";
 	import { pretty_si } from "./utils";
 
 	let items: HTMLDivElement[] = [];
 
 	let called = false;
+
+	const is_browser = typeof window !== "undefined";
+	const raf = is_browser
+		? window.requestAnimationFrame
+		: (cb: (...args: any[]) => void) => {};
+	const shown_cache_indicator_keys = new Set<string>();
 
 	async function scroll_into_view(
 		el: HTMLDivElement,
@@ -23,7 +29,7 @@
 
 		await tick();
 
-		requestAnimationFrame(() => {
+		raf(() => {
 			let min = [0, 0];
 
 			for (let i = 0; i < items.length; i++) {
@@ -45,60 +51,153 @@
 </script>
 
 <script lang="ts">
-	import { onDestroy } from "svelte";
-
 	import Loader from "./Loader.svelte";
-	import type { LoadingStatus } from "./types";
+	import type { ILoadingStatus as LoadingStatus } from "./types";
 	import type { I18nFormatter } from "@gradio/utils";
-	import { createEventDispatcher } from "svelte";
+	import type { Snippet } from "svelte";
 
 	import { IconButton } from "@gradio/atoms";
 	import { Clear } from "@gradio/icons";
 
-	const dispatch = createEventDispatcher();
+	interface Props {
+		i18n: I18nFormatter;
+		eta?: number | null;
+		queue_position: number | null;
+		queue_size: number | null;
+		component_id?: number | null;
+		fn_index?: number | null;
+		status:
+			| "complete"
+			| "pending"
+			| "error"
+			| "generating"
+			| "streaming"
+			| null;
+		scroll_to_output?: boolean;
+		timer?: boolean;
+		show_progress?: "full" | "minimal" | "hidden";
+		message?: string | null;
+		progress?: LoadingStatus["progress"] | null | undefined;
+		time_start?: number | null;
+		eta_total?: number | null;
+		variant?: "default" | "center";
+		loading_text?: string;
+		absolute?: boolean;
+		translucent?: boolean;
+		border?: boolean;
+		autoscroll: boolean;
+		validation_error?: string | null;
+		show_validation_error?: boolean;
+		type?: "input" | "output" | "skip" | null;
+		on_clear_status?: () => void;
+		used_cache?: "full" | "partial" | null;
+		cache_duration?: number | null;
+		avg_time?: number | null;
+		cache_event_id?: number | null;
+		additional_loading_text?: Snippet;
+		error_details?: Snippet;
+	}
 
-	export let i18n: I18nFormatter;
-	export let eta: number | null = null;
-	export let queue_position: number | null;
-	export let queue_size: number | null;
-	export let status: "complete" | "pending" | "error" | "generating" | null;
-	export let scroll_to_output = false;
-	export let timer = true;
-	export let show_progress: "full" | "minimal" | "hidden" = "full";
-	export let message: string | null = null;
-	export let progress: LoadingStatus["progress"] | null | undefined = null;
-	export let variant: "default" | "center" = "default";
-	export let loading_text = "Loading...";
-	export let absolute = true;
-	export let translucent = false;
-	export let border = false;
-	export let autoscroll: boolean;
+	interface ProgressLevel {
+		progress_level: (number | undefined)[] | null;
+		last_progress_level: number | undefined;
+		progress_bar_transition: string;
+	}
+
+	let {
+		i18n,
+		eta = null,
+		queue_position,
+		queue_size,
+		component_id = null,
+		fn_index = null,
+		status,
+		scroll_to_output = false,
+		timer = true,
+		show_progress = "full",
+		message = null,
+		progress = null,
+		time_start = null,
+		eta_total = null,
+		variant = "default",
+		loading_text = "Loading...",
+		absolute = true,
+		translucent = false,
+		border = false,
+		autoscroll,
+		validation_error = null,
+		show_validation_error = true,
+		type = null,
+		on_clear_status,
+		used_cache = null,
+		cache_duration = null,
+		avg_time = null,
+		cache_event_id = null,
+		additional_loading_text,
+		error_details
+	}: Props = $props();
 
 	let el: HTMLDivElement;
 
 	let _timer = false;
-	let timer_start = 0;
-	let timer_diff = 0;
-	let old_eta: number | null = null;
-	let eta_from_start: number | null = null;
-	let message_visible = false;
-	let eta_level: number | null = 0;
-	let progress_level: (number | undefined)[] | null = null;
-	let last_progress_level: number | undefined = undefined;
-	let progress_bar: HTMLElement | null = null;
-	let show_eta_bar = true;
+	let timer_start = $state(0);
+	let old_eta = $state<number | null>(null);
+	let eta_from_start = $state<number | null>(null);
+	let message_visible = $state(false);
+	let formatted_eta = $state<string | null>(null);
+	let show_message_timeout = $state<NodeJS.Timeout | null>(null);
+	let show_cache_indicator = $state(false);
+	let cache_indicator_fading = $state(false);
+	let cache_display_time = $state<string | null>(null);
+	let cache_display_avg = $state<string | null>(null);
+	let cache_indicator_label = $state("from cache");
+	let show_cache_avg = $state(false);
+	let cache_timeout: ReturnType<typeof setTimeout> | null = null;
+	let cache_fade_timeout: ReturnType<typeof setTimeout> | null = null;
+	let last_cache_indicator_key: string | null = null;
 
-	$: eta_level =
-		eta_from_start === null || eta_from_start <= 0 || !timer_diff
-			? null
-			: Math.min(timer_diff / eta_from_start, 1);
-	$: if (progress != null) {
-		show_eta_bar = false;
+	function hide_cache_indicator(): void {
+		if (cache_timeout) clearTimeout(cache_timeout);
+		if (cache_fade_timeout) clearTimeout(cache_fade_timeout);
+		cache_timeout = null;
+		cache_fade_timeout = null;
+		show_cache_indicator = false;
+		cache_indicator_fading = false;
 	}
 
-	$: {
+	const should_hide = $derived(
+		!(show_validation_error && validation_error) &&
+			(type === "input" ||
+				!status ||
+				status === "complete" ||
+				show_progress === "hidden" ||
+				status == "streaming")
+	);
+
+	let timer_diff = $state(0);
+
+	const eta_level = $derived(
+		eta_from_start === null || eta_from_start <= 0 || !timer_diff
+			? 0
+			: Math.min(timer_diff / eta_from_start, 1)
+	);
+
+	const formatted_timer = $derived(timer_diff.toFixed(1));
+
+	let show_eta_bar = $derived(progress != null ? false : true);
+	let effective_eta = $derived(eta ?? old_eta);
+
+	function run(): void {
+		raf(() => {
+			timer_diff = (performance.now() - timer_start) / 1000;
+			if (_timer) run();
+		});
+	}
+
+	let progress_level = $derived.by<ProgressLevel>(() => {
+		let _progress_level: (number | undefined)[] | null = null;
 		if (progress != null) {
-			progress_level = progress.map((p) => {
+			_progress_level = progress.map((p) => {
 				if (p.index != null && p.length != null) {
 					return p.index / p.length;
 				} else if (p.progress != null) {
@@ -107,103 +206,184 @@
 				return undefined;
 			});
 		} else {
-			progress_level = null;
+			_progress_level = null;
 		}
 
-		if (progress_level) {
-			last_progress_level = progress_level[progress_level.length - 1];
-			if (progress_bar) {
-				if (last_progress_level === 0) {
-					progress_bar.style.transition = "0";
-				} else {
-					progress_bar.style.transition = "150ms";
-				}
+		let _last_progress_level: number | undefined;
+		let transition = "";
+		if (_progress_level) {
+			_last_progress_level = _progress_level[_progress_level.length - 1];
+
+			if (_last_progress_level === 0) {
+				transition = "0";
+			} else {
+				transition = "150ms";
 			}
 		} else {
-			last_progress_level = undefined;
+			_last_progress_level = undefined;
 		}
-	}
 
-	const start_timer = (): void => {
-		eta = old_eta = formatted_eta = null;
-		timer_start = performance.now();
-		timer_diff = 0;
+		return {
+			progress_level: _progress_level,
+			last_progress_level: _last_progress_level,
+			progress_bar_transition: transition
+		};
+	});
+
+	function start_timer(): void {
+		if (_timer) return;
+
+		if (time_start == null) {
+			old_eta = formatted_eta = null;
+		}
+		timer_start = time_start ?? performance.now();
+
 		_timer = true;
 		run();
-	};
-
-	function run(): void {
-		requestAnimationFrame(() => {
-			timer_diff = (performance.now() - timer_start) / 1000;
-			if (_timer) run();
-		});
 	}
 
 	function stop_timer(): void {
-		timer_diff = 0;
-		eta = old_eta = formatted_eta = null;
-
+		old_eta = formatted_eta = null;
 		if (!_timer) return;
 		_timer = false;
 	}
 
-	onDestroy(() => {
-		if (_timer) stop_timer();
-	});
-
-	$: {
+	$effect(() => {
 		if (status === "pending") {
 			start_timer();
 		} else {
-			stop_timer();
+			untrack(() => {
+				stop_timer();
+			});
 		}
-	}
+	});
 
-	$: el &&
-		scroll_to_output &&
-		(status === "pending" || status === "complete") &&
-		scroll_into_view(el, autoscroll);
-
-	let formatted_eta: string | null = null;
-	$: {
-		if (eta === null) {
-			eta = old_eta;
+	$effect(() => {
+		if (status === "pending" && time_start != null && _timer) {
+			timer_start = time_start;
 		}
-		if (eta != null && old_eta !== eta) {
-			eta_from_start = (performance.now() - timer_start) / 1000 + eta;
+	});
+
+	$effect(() => {
+		if (
+			el &&
+			scroll_to_output &&
+			(status === "pending" || status === "complete")
+		) {
+			scroll_into_view(el, autoscroll);
+		}
+	});
+
+	$effect(() => {
+		if (eta_total != null) {
+			eta_from_start = eta_total;
+			formatted_eta = eta_total.toFixed(1);
+			if (eta != null) old_eta = eta;
+			return;
+		}
+		if (effective_eta != null && old_eta !== effective_eta) {
+			eta_from_start = (performance.now() - timer_start) / 1000 + effective_eta;
 			formatted_eta = eta_from_start.toFixed(1);
-			old_eta = eta;
+			old_eta = effective_eta;
 		}
-	}
-	let show_message_timeout: NodeJS.Timeout | null = null;
+	});
+
 	function close_message(): void {
 		message_visible = false;
 		if (show_message_timeout !== null) {
 			clearTimeout(show_message_timeout);
 		}
 	}
-	$: {
-		close_message();
+
+	$effect(() => {
+		untrack(() => {
+			close_message();
+		});
+
 		if (status === "error" && message) {
 			message_visible = true;
 		}
-	}
-	$: formatted_timer = timer_diff.toFixed(1);
+	});
+
+	$effect(() => {
+		if (
+			status === "complete" &&
+			type === "output" &&
+			used_cache &&
+			cache_duration != null
+		) {
+			const cache_indicator_key =
+				cache_event_id == null
+					? null
+					: `${component_id ?? fn_index ?? "unknown"}:${fn_index ?? "unknown"}:${cache_event_id}`;
+			if (
+				cache_indicator_key === last_cache_indicator_key ||
+				(cache_indicator_key != null &&
+					shown_cache_indicator_keys.has(cache_indicator_key))
+			) {
+				return;
+			}
+			last_cache_indicator_key = cache_indicator_key;
+			if (cache_indicator_key != null) {
+				shown_cache_indicator_keys.add(cache_indicator_key);
+			}
+			cache_display_time = cache_duration.toFixed(1);
+			cache_indicator_label =
+				used_cache === "full" ? "from cache" : "used cache";
+			show_cache_avg =
+				avg_time != null && avg_time > cache_duration && avg_time > 0;
+			cache_display_avg = show_cache_avg ? avg_time!.toFixed(1) : null;
+			show_cache_indicator = true;
+			cache_indicator_fading = false;
+
+			if (cache_timeout) clearTimeout(cache_timeout);
+			if (cache_fade_timeout) clearTimeout(cache_fade_timeout);
+			cache_timeout = setTimeout(() => {
+				cache_indicator_fading = true;
+				cache_fade_timeout = setTimeout(() => {
+					show_cache_indicator = false;
+					cache_indicator_fading = false;
+				}, 500);
+			}, 1750);
+		} else if (type === "output" && !used_cache) {
+			hide_cache_indicator();
+		}
+	});
 </script>
 
 <div
 	class="wrap {variant} {show_progress}"
-	class:hide={!status || status === "complete" || show_progress === "hidden"}
+	class:no-click={validation_error && show_validation_error}
+	class:hide={should_hide}
 	class:translucent={(variant === "center" &&
 		(status === "pending" || status === "error")) ||
 		translucent ||
-		show_progress === "minimal"}
-	class:generating={status === "generating"}
+		show_progress === "minimal" ||
+		validation_error}
+	class:generating={status === "generating" && show_progress === "full"}
 	class:border
 	style:position={absolute ? "absolute" : "static"}
 	style:padding={absolute ? "0" : "var(--size-8) 0"}
+	data-testid="status-tracker"
 	bind:this={el}
 >
+	{#if validation_error && show_validation_error}
+		<div class="validation-error">
+			{validation_error}
+			<button
+				><IconButton
+					Icon={Clear}
+					label={i18n ? i18n("common.clear") : "Clear"}
+					disabled={false}
+					size="x-small"
+					background="var(--background-fill-primary)"
+					color="var(--error-background-text)"
+					border="var(--border-color-primary)"
+					onclick={() => (validation_error = null)}
+				/></button
+			>
+		</div>
+	{/if}
 	{#if status === "pending"}
 		{#if variant === "default" && show_eta_bar && show_progress === "full"}
 			<div
@@ -238,23 +418,23 @@
 			{/if}
 		</div>
 
-		{#if last_progress_level != null}
+		{#if progress_level.last_progress_level != null}
 			<div class="progress-level">
 				<div class="progress-level-inner">
 					{#if progress != null}
 						{#each progress as p, i}
-							{#if p.desc != null || (progress_level && progress_level[i] != null)}
+							{#if p.desc != null || (progress_level.progress_level && progress_level.progress_level[i] != null)}
 								{#if i !== 0}
 									&nbsp;/
 								{/if}
 								{#if p.desc != null}
 									{p.desc}
 								{/if}
-								{#if p.desc != null && progress_level && progress_level[i] != null}
+								{#if p.desc != null && progress_level.progress_level && progress_level.progress_level[i] != null}
 									-
 								{/if}
-								{#if progress_level != null}
-									{(100 * (progress_level[i] || 0)).toFixed(1)}%
+								{#if progress_level.progress_level != null}
+									{(100 * (progress_level.progress_level[i] || 0)).toFixed(1)}%
 								{/if}
 							{/if}
 						{/each}
@@ -263,9 +443,9 @@
 
 				<div class="progress-bar-wrap">
 					<div
-						bind:this={progress_bar}
 						class="progress-bar"
-						style:width="{last_progress_level * 100}%"
+						style:width="{progress_level.last_progress_level * 100}%"
+						style:transition={progress_level.progress_bar_transition}
 					/>
 				</div>
 			</div>
@@ -275,7 +455,7 @@
 
 		{#if !timer}
 			<p class="loading">{loading_text}</p>
-			<slot name="additional-loading-text" />
+			{@render additional_loading_text?.()}
 		{/if}
 	{:else if status === "error"}
 		<div class="clear-status">
@@ -283,15 +463,27 @@
 				Icon={Clear}
 				label={i18n("common.clear")}
 				disabled={false}
-				on:click={() => {
-					dispatch("clear_status");
+				onclick={() => {
+					on_clear_status?.();
 				}}
 			/>
 		</div>
 		<span class="error">{i18n("common.error")}</span>
-		<slot name="error" />
+		{@render error_details?.()}
 	{/if}
 </div>
+
+{#if show_cache_indicator}
+	<div
+		class="cache-indicator"
+		class:fade-out={cache_indicator_fading}
+		style:position={absolute ? "absolute" : "static"}
+	>
+		&#9889; {cache_indicator_label}: {#if show_cache_avg}~{cache_display_avg}s
+			&rarr;&nbsp;
+		{/if}{cache_display_time}s
+	</div>
+{/if}
 
 <style>
 	.wrap {
@@ -299,13 +491,15 @@
 		flex-direction: column;
 		justify-content: center;
 		align-items: center;
-		z-index: var(--layer-top);
+		z-index: var(--layer-3);
 		transition: opacity 0.1s ease-in-out;
 		border-radius: var(--block-radius);
 		background: var(--block-background-fill);
 		padding: 0 var(--size-6);
-		max-height: var(--size-screen-h);
 		overflow: hidden;
+	}
+	.no-click {
+		pointer-events: none;
 	}
 
 	.wrap.center {
@@ -327,7 +521,9 @@
 	}
 
 	.generating {
-		animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+		animation:
+			pulseStart 1s cubic-bezier(0.4, 0, 0.6, 1),
+			pulse 2s cubic-bezier(0.4, 0, 0.6, 1) 1s infinite;
 		border: 2px solid var(--color-accent);
 		background: transparent;
 		z-index: var(--layer-1);
@@ -336,6 +532,15 @@
 
 	.translucent {
 		background: none;
+	}
+
+	@keyframes pulseStart {
+		0% {
+			opacity: 0;
+		}
+		100% {
+			opacity: 1;
+		}
 	}
 
 	@keyframes pulse {
@@ -395,10 +600,11 @@
 
 	.meta-text {
 		position: absolute;
-		top: 0;
+		bottom: 0;
 		right: 0;
 		z-index: var(--layer-2);
 		padding: var(--size-1) var(--size-2);
+		color: var(--body-text-color);
 		font-size: var(--text-sm);
 		font-family: var(--font-mono);
 	}
@@ -413,6 +619,7 @@
 		transform: translateY(var(--size-6));
 		z-index: var(--layer-2);
 		padding: var(--size-1) var(--size-2);
+		color: var(--body-text-color);
 		font-size: var(--text-sm);
 		font-family: var(--font-mono);
 		text-align: center;
@@ -432,6 +639,34 @@
 		font-family: var(--font);
 	}
 
+	.validation-error {
+		pointer-events: auto;
+		color: var(--error-text-color);
+		font-weight: var(--weight-semibold);
+		font-size: var(--text-lg);
+		line-height: var(--line-lg);
+		font-family: var(--font);
+		position: absolute;
+		background: var(--error-background-fill);
+		top: 0;
+		right: 0;
+		z-index: var(--layer-3);
+		padding: var(--size-1) var(--size-2);
+		font-size: var(--text-md);
+		text-align: center;
+		border-bottom-left-radius: var(--radius-sm);
+		border-bottom: 1px solid var(--error-border-color);
+		border-left: 1px solid var(--error-border-color);
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: var(--spacing-xl);
+	}
+
+	.minimal {
+		pointer-events: none;
+	}
+
 	.minimal .progress-text {
 		background: var(--block-background-fill);
 	}
@@ -448,5 +683,23 @@
 		justify-content: flex-end;
 		gap: var(--spacing-sm);
 		z-index: var(--layer-1);
+	}
+
+	.cache-indicator {
+		position: absolute;
+		bottom: 0;
+		right: 0;
+		z-index: var(--layer-2);
+		padding: var(--size-1) var(--size-2);
+		font-size: var(--text-sm);
+		font-family: var(--font-mono);
+		pointer-events: none;
+		background: var(--block-background-fill);
+		opacity: 1;
+		transition: opacity 0.5s ease-out;
+	}
+
+	.cache-indicator.fade-out {
+		opacity: 0;
 	}
 </style>

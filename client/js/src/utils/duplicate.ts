@@ -6,12 +6,19 @@ import {
 import type { DuplicateOptions } from "../types";
 import { Client } from "../client";
 import { SPACE_METADATA_ERROR_MSG } from "../constants";
+import {
+	get_cookie_header,
+	normalise_token_option,
+	parse_and_set_cookies
+} from "../helpers/init_helpers";
+import { process_endpoint } from "../helpers/api_info";
 
 export async function duplicate(
 	app_reference: string,
 	options: DuplicateOptions
 ): Promise<Client> {
-	const { hf_token, private: _private, hardware, timeout } = options;
+	normalise_token_option(options);
+	const { token, private: _private, hardware, timeout, auth } = options;
 
 	if (hardware && !hardware_types.includes(hardware)) {
 		throw new Error(
@@ -20,9 +27,28 @@ export async function duplicate(
 				.join(",")}.`
 		);
 	}
+
+	const { http_protocol, host } = await process_endpoint(app_reference, token);
+
+	let cookies: string[] | null = null;
+
+	if (auth) {
+		const cookie_header = await get_cookie_header(
+			http_protocol,
+			host,
+			auth,
+			fetch,
+			undefined,
+			options.credentials
+		);
+
+		if (cookie_header) cookies = parse_and_set_cookies(cookie_header);
+	}
+
 	const headers = {
-		Authorization: `Bearer ${hf_token}`,
-		"Content-Type": "application/json"
+		Authorization: `Bearer ${token}`,
+		"Content-Type": "application/json",
+		...(cookies ? { Cookie: cookies.join("; ") } : {})
 	};
 
 	const user = (
@@ -50,7 +76,7 @@ export async function duplicate(
 
 	try {
 		if (!hardware) {
-			original_hardware = await get_space_hardware(app_reference, hf_token);
+			original_hardware = await get_space_hardware(app_reference, token);
 		}
 	} catch (e) {
 		throw Error(SPACE_METADATA_ERROR_MSG + (e as Error).message);
@@ -84,7 +110,7 @@ export async function duplicate(
 
 		const duplicated_space = await response.json();
 
-		await set_space_timeout(`${user}/${space_name}`, timeout || 300, hf_token);
+		await set_space_timeout(`${user}/${space_name}`, timeout || 300, token);
 
 		return await Client.connect(
 			get_space_reference(duplicated_space.url),

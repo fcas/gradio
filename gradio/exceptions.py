@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 from gradio_client.documentation import document
+from gradio_client.exceptions import AppError
 
 
 class DuplicateBlockError(ValueError):
@@ -9,12 +12,6 @@ class DuplicateBlockError(ValueError):
 
 class InvalidComponentError(ValueError):
     """Raised when invalid components are used."""
-
-    pass
-
-
-class TooManyRequestsError(Exception):
-    """Raised when the Hugging Face API returns a 429 status code."""
 
     pass
 
@@ -57,11 +54,19 @@ class GradioVersionIncompatibleError(Exception):
     pass
 
 
+class ComponentProcessingError(ValueError):
+    """Raised when a component fails to pre/postprocess a value passed to or
+    returned from an event handler. Wraps the original exception with information
+    identifying which component/argument was at fault."""
+
+    pass
+
+
 InvalidApiName = InvalidApiNameError  # backwards compatibility
 
 
 @document(documentation_group="modals")
-class Error(Exception):
+class Error(AppError):
     """
     This class allows you to pass custom error messages to the user. You can do so by raising a gr.Error("custom message") anywhere in the code, and when that line is executed the custom message will appear in a modal on the demo.
     Example:
@@ -71,15 +76,32 @@ class Error(Exception):
                 raise gr.Error("Cannot divide by zero!")
         gr.Interface(divide, ["number", "number"], "number").launch()
     Demos: calculator, blocks_chained_events
+    Guides: alerts
     """
 
-    def __init__(self, message: str = "Error raised."):
+    def __init__(
+        self,
+        message: str = "Error raised.",
+        duration: float | None = 10,
+        visible: bool = True,
+        title: str = "Error",
+        print_exception: bool = True,
+    ):
         """
         Parameters:
-            message: The error message to be displayed to the user.
+            message: The error message to be displayed to the user. Can be HTML, which will be rendered in the modal.
+            duration: The duration in seconds to display the error message. If None or 0, the error message will be displayed until the user closes it.
+            visible: Whether the error message should be displayed in the UI.
+            title: The title to be displayed to the user at the top of the error modal.
+            print_exception: Whether to print traceback of the error to the console when the error is raised.
         """
-        self.message = message
-        super().__init__(self.message)
+        super().__init__(
+            message=message,
+            duration=duration,
+            visible=visible,
+            title=title,
+            print_exception=print_exception,
+        )
 
     def __str__(self):
         return repr(self.message)
@@ -87,3 +109,22 @@ class Error(Exception):
 
 class ComponentDefinitionError(NotImplementedError):
     pass
+
+
+class InvalidPathError(ValueError):
+    pass
+
+
+class ChecksumMismatchError(Exception):
+    pass
+
+
+class ShareCertificateWriteError(RuntimeError):
+    pass
+
+
+class TooManyRequestsError(Error):
+    """Raised when the Hugging Face API returns a 429 status code."""
+
+    def __init__(self, message: str = "Too many requests. Please try again later."):
+        super().__init__(message)

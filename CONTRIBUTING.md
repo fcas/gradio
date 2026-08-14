@@ -3,50 +3,152 @@
 ![GitHub issues by-label](https://img.shields.io/github/issues/gradio-app/gradio/good%20first%20issue?color=fe7c01&link=https%3A%2F%2Fgithub.com%2Fgradio-app%2Fgradio%2Fissues%3Fq%3Dis%253Aopen%2Bis%253Aissue%2Blabel%253A%2522good%2Bfirst%2Bissue%2522)
 
 
-More than 200 awesome developers have contributed to the `gradio` library, and we'd be thrilled if you would like to be the next contributor! 
+More than 300 awesome developers have contributed to the `gradio` library, and the best way to help us today is by **opening a detailed issue** rather than a pull request.
 
-Prerequisites:
+## 📝 The best way to contribute: open a great issue
 
-- [Python 3.8+](https://www.python.org/downloads/)
-- [Node.js v16.14+](https://nodejs.dev/en/download/package-manager/) (only needed if you are making changes to the frontend)
-- [pnpm 8.1+](https://pnpm.io/8.x/installation) (only needed if you are making changes to the frontend)
- 
-## 🏡 Setup for local development
+We have **paused accepting pull requests from outside the Gradio maintainer team.** As AI coding agents have become widespread, the volume of community PRs has grown to the point where reviewing them carefully takes more maintainer time than the alternative: pointing our own coding agents at a well-described issue and solving it ourselves.
+
+So the single most valuable thing you can do is **file a clear, detailed, reproducible issue.** A great issue lets us (and our agents) understand and fix the problem quickly, and it helps us prioritize what to work on next for Gradio.
+
+> If you are a member of the Gradio maintainer team, the local setup, testing, and PR sections further down still apply to you.
+
+### 🐛 Reporting a bug
+
+Please [open an issue](https://github.com/gradio-app/gradio/issues/new/choose) and include:
+
+1. **A clear, descriptive title** that summarizes the problem.
+2. **What you expected to happen** vs. **what actually happened.**
+3. **Step-by-step instructions to reproduce the bug**, numbered and as specific as possible (which component, which event, what input, etc.).
+4. **A minimal reproduction.** This is the most important part. Please include the smallest self-contained Gradio app that triggers the bug, for example:
+   - a short code snippet (ideally runnable as-is), and/or
+   - a link to a minimal hosted demo on [Hugging Face Spaces](https://huggingface.co/spaces) or a small repo that reproduces the issue.
+5. **Your environment**: Gradio version (`gradio --version` or `gr.__version__`), Python version, operating system, and browser (for frontend issues).
+6. **Screenshots, screen recordings, or error tracebacks** where relevant.
+
+The smaller and more self-contained the reproduction, the faster we can fix it.
+
+[#10568](https://github.com/gradio-app/gradio/issues/10568) is a good example of a bug report to follow.
+
+### ✨ Requesting a feature
+
+Please [open an issue](https://github.com/gradio-app/gradio/issues/new/choose) and include:
+
+1. **A clear, descriptive title.**
+2. **The problem or use case** you're trying to solve — what are you trying to build, and where does Gradio fall short today?
+3. **A detailed description of the feature** you'd like, including a proposed API or example of how you imagine it would be used in code.
+4. **A demo or mockup** where possible — a link to a small repro/demo, a sketch, or a screenshot of a similar feature elsewhere helps us understand the request quickly.
+5. **Alternatives you've considered**, including any workarounds you're currently using.
+
+Detailed feature requests directly shape our roadmap and help us prioritize what to build next.
+
+[#12519](https://github.com/gradio-app/gradio/issues/12519) is a good example of a feature request issue to follow.
+
+## 🏡 Setup Gradio locally
+
+> The following sections (local setup, structure, testing, and submitting PRs) are primarily for the Gradio maintainer team. If you're an outside contributor, the most helpful thing you can do is [open a detailed issue](#-the-best-way-to-contribute-open-a-great-issue) — but you're also welcome to run Gradio locally to build a clean reproduction for your issue.
 
 There are a few ways to install and run Gradio.
 
-### 🛠️ Install Gradio locally from `main`
+### 🛠️ Install Gradio from `main`
 
 - Clone this repo
-- Navigate to the repo directory and (from the root directory) run
+- Navigate to the repo directory and run:
+<table>
+  <tr>
+  <th>MacOS / Linux</th>
+  <th>Windows</th>
+  </tr>
+  <tr>
+  <td>
 
 ```bash
 bash scripts/install_gradio.sh
 ```
+  </td>
+  <td>
 
-- Build the front end
-
+```bash
+scripts\install_gradio.bat
 ```
-bash scripts/build_frontend.sh
+  </td>
+  </tr>
+</table>
+
+- Run the frontend (only required if you are making changes to the frontend and would like to preview them)
+<table>
+  <tr>
+  <th>MacOS / Linux</th>
+  <th>Windows</th>
+  </tr>
+  <tr>
+  <td>
+
+```bash
+bash scripts/run_frontend.sh
 ```
-
--  Install development requirements
-
-(Note that it is highly recommended to use a virtual environment running **Python 3.9** since the versions of Gradio's dependencies are pinned)
-
+  </td>
+  <td>
+  
+```bash
+scripts\run_frontend.bat
 ```
+  </td>
+  </tr>
+</table>
+
+-  Install test requirements (only required if you want to run tests locally)
+
+(Note that it is highly recommended to use a virtual environment running **Python 3.10** since the versions of Gradio's dependencies are pinned)
+
+<table>
+  <tr>
+  <th>MacOS / Linux</th>
+  <th>Windows</th>
+  </tr>
+  <tr>
+  <td>
+
+```bash
 bash scripts/install_test_requirements.sh
 ```
+  </td>
+  <td>
+  
+```bash
+scripts\install_test_requirements.bat
+```
+  </td>
+  </tr>
+</table>
 
 If you have a different Python version and conflicting packages during the installation, please first run:
 
-```
+<table>
+  <tr>
+  <th>MacOS / Linux</th>
+  <th>Windows</th>
+  </tr>
+  <tr>
+  <td>
+
+```bash
 bash scripts/create_test_requirements.sh
 ```
+  </td>
+  <td>
+  
+```bash
+scripts\create_test_requirements.bat
+```
+  </td>
+  </tr>
+</table>
+
 
 ### 📦 Using dev containers
 
-You can alternatively use dev containers. This is supported on all platforms (macOS/Windows/Linux), as well as on GitHub Codespaces. 
+Instead of installing Gradio locally, you can alternatively use dev containers. This is supported on all platforms (macOS/Windows/Linux), as well as on GitHub Codespaces. 
 
 Prerequisites:
 
@@ -73,17 +175,16 @@ If you're a newcomer to Gradio, we recommend getting familiar with the overall s
   - `/gradio/interface.py`: contains the Python source code for the core `Interface` class
   - `/gradio/blocks.py`: contains the Python source code for the core `Blocks` class
   - `/gradio/components/`: the directory that contains the Python source code for all of the Gradio components.
-- `/js`: contains the HTML/JS/CSS source code for the library ([start here for frontend changes](/js/README.md))
-  - `/js/_website`: contains the code for the Gradio website (www.gradio.app). See the README in the `/js/_website` folder for more details
 - `/test`: contains Python unit tests for the library
-- `/demo`: contains demos that are used in the documentation, you can find `Gradio` examples over here.
-
+- `/js`: contains the HTML/JS/CSS source code for the library, including the fronted code for each component in a separate directory
+  - `/js/_website`: contains the code for the Gradio website (www.gradio.app). See the README in the `/js/_website` folder for more details
+- `/guides`: the written guides and tutorials that are found on Gradio's website.
 
 ## 🚀 Run a Gradio app
 
 You can get started by creating an `app.py` file in the root:
 
-```
+```py
 import gradio as gr
 
 with gr.Blocks() as demo:
@@ -101,12 +202,33 @@ gradio app.py
 
 This will start the backend server in reload mode, which will watch for changes in the `gradio` folder and reload the app if changes are made. By default, Gradio will launch on port 7860. You can also just use `python app.py`, but this won't automatically trigger updates. 
 
+Note: if you have `gradio` installed elsewhere in your system, you may need to uninstall it or at least make sure your `PYTHONPATH` includes the directory where the Gradio repository is cloned, e.g.,
+`export PYTHONPATH="./"`
+
 
 If you're making frontend changes, start the frontend server:
 
+
+<table>
+  <tr>
+  <th>MacOS / Linux</th>
+  <th>Windows</th>
+  </tr>
+  <tr>
+  <td>
+
+```bash
+bash scripts/run_frontend.sh
 ```
-pnpm dev
+  </td>
+  <td>
+  
+```bash
+scripts\run_frontend.bat
 ```
+  </td>
+  </tr>
+</table>
 
 This will open a separate browser tab. By default, Gradio will launch this on port 9876. Any changes to the frontend will also reload automatically in the browser. For more information about developing in the frontend, you can refer to [js/README.md](js/README.md).
 
@@ -123,9 +245,26 @@ We use Pytest, Playwright and Vitest to test our code.
 
 - The Python tests are located in `/test`. To run these tests:
 
+<table>
+  <tr>
+  <th>MacOS / Linux</th>
+  <th>Windows</th>
+  </tr>
+  <tr>
+  <td>
+
 ```
-bash scripts/run_all_tests.sh
+bash scripts/run_backend_tests.sh
 ```
+  </td>
+  <td>
+  
+```bash
+scripts\run_backend_tests.bat
+```
+  </td>
+  </tr>
+</table>
 
 - The frontend unit tests are any defined with the filename `*.test.ts`. To run them:
 
@@ -133,7 +272,17 @@ bash scripts/run_all_tests.sh
 pnpm test
 ```
 
-- Browser tests are located in `js/app/test` and are defined as `*spec.ts` files. To run browser tests:
+- Browser tests are located in `js/spa/test` and are defined as `*spec.ts` files.
+
+To install browser test dependencies:
+
+```
+pnpm exec playwright install chromium firefox
+pnpm exec playwright install-deps chromium firefox
+pnpm --filter @gradio/utils --filter @gradio/theme package
+```
+
+To run browser tests:
 
 ```
 pnpm test:browser
@@ -157,59 +306,98 @@ If you have made any significant visual changes to a component, we encourage you
 pnpm storybook
 ```
 
-## 🕸️ Gradio Website
+## ✍️ Gradio Website & Docs 
 
-We also welcome any contributions to our [website](https://www.gradio.app). 
+We also welcome any contributions to our [website](https://www.gradio.app) and [docs](https://www.gradio.app/docs). 
 
-First, build the website:
+### Building The Website
+
+All of the website code lives in the `js/_website/` directory. 
+
+To start the website on dev mode simply cd into this directory and run: 
 
 ```
-pnpm build:cdn-local
-```
-then serve the website build:
-```
-pnpm preview:cdn-local
-```
-
-This will serve a build of `gradio.js` on port `4321`. You can then navigate to `js/_website/src/routes/+layout.svelte` and replace the source of the website build from:
-```
-<script type="module" src="https://gradio.s3-us-west-2.amazonaws.com/{version}/gradio.js"></script>
-```
-to 
-```
-<script type="module" src="http://localhost:4321/gradio.js"></script>
+pnpm i 
+pnpm dev
 ```
 
-You should now be able to view a local version of the website at `http://localhost:4321`. 
+This will serve the website on `http://localhost:5173/` (or the next available port). 
 
-## 🌎 Gradio-Lite
+When you're done with changes and want to build the website you can run: 
 
-Gradio-Lite is a Pyodide-based library that lets you run Gradio serverless (in other words, directly in your browser).
-
-You can start the development server by running:
 ```
-bash scripts/run_lite.sh
+pnpm build && pnpm preview 
 ```
 
-If you make changes to the Python code during development, you will need to rebuild the Python packages loaded to Graio-Lite. To do this, run:
+This will serve the website on `http://localhost:4173/` (or the next available port). 
+
+### Documentation
+#### API Reference 
+
+Gradio's [API reference](https://www.gradio.app/docs/gradio/interface) is built from templates written in [mdsvex](https://mdsvex.pngwn.io/). You can find all the templates in this directory: 
+
 ```
-pnpm --filter @gradio/app pybuild
+js/_website/src/lib/templates/gradio
 ```
 
-To generate the release build, run:
+The templates directory is structured as follows: 
+
 ```
-bash scripts/build_lite.sh
+├── gradio/
+│   ├── 01_building-demos/
+│   │   ├── 01_interface.svx
+│   │   ├── 02_chatinterface.svx
+│   │   ├── 03_tabbedinterface.svx
+│   │   ├── 04_blocks.svx
+│   ├── 02_blocks-layout/
+│   ├── 03_components/
+│   ├── 04_helpers/
+│   ├── 05_modals/
+│   ├── 06_routes/
+│   ├── other/
 ```
-The release build will be located in the `dist` directory in the `js/lite` project.
-To test it, you can run a local server in the `js/lite` directory:
+
+This structure defines the pages' ordering. You can use a numeral prefix (XX_) before a name to dictate where a page is listed, but it's otherwise ignored in the url route. Note that the folder names (01_building-demos, etc) are only used for the navbar and are not in the url.
+
+The mdsvex files use a combination of markdown and svelte. They also pull documentation directly from the source code. Adding a `@document()` wrapper around any class or function in the source code will make its docstrings available in the templates. 
+
+Here's an example: the template for [Image docs](https://www.gradio.app/docs/gradio/image) is [here](https://github.com/gradio-app/gradio/blob/main/js/_website/src/lib/templates/gradio/03_components/image.svx). You can see the initialization section references `obj.parameters`. So to edit the description of a parameter you'll have to edit the docstring in the [source code](https://github.com/gradio-app/gradio/blob/main/gradio/components/image.py). But the page also includes a section titled 'GIF and SVG Image Formats' which is written in plain markdown and can be edited directly on the template. 
+
+If you are making changes to docstrings and want to see them on the website you have to make sure you're on an editable install of the gradio library. Just run this command from root:
+
 ```
-python -m http.server --directory js/lite
+pip install -e . 
 ```
-and navigate to `http://localhost:8000` in your browser. The demo page `index.html` located in the `js/lite` directory will be loaded.
+
+And then from the website directory: 
+
+```
+pnpm dev
+```
+
+#### Guides 
+
+Guides like [Quickstart](https://www.gradio.app/guides/quickstart) are built from this directory: `/guides`. The directory follows the same structure as the API reference templates, with nested folders and numerical prefixes for ordering, but the files are standard markdown files. After adding a new guide, or editing an existing one, to see the changes on the website make sure you are on an editable install of the gradio library. Run this command from root: 
+
+```
+pip install -e . 
+```
+
+and then from the website directory: 
+
+```
+pnpm dev
+```
+
+#### Main vs. Released 
+
+The website supports documentation for both the latest released version on pypi as well as the main build on github. You can switch between them on the website by using the toggle on any page or by prefixing '/main' before the route in the url. For example: https://www.gradio.app/main/guides/quickstart 
+
+If you're making changes to documentation and are wondering why they're not showing up, make sure you're looking at the 'main' version of the page. Since they haven't been included in a release yet, they will only be visible there. 
 
 ## 📮 Submitting PRs
 
-All PRs should be against `main`, and ideally should address an open issue, unless the change is small. Direct commits to main are blocked, and PRs require an approving review to merge into main. By convention, the Gradio maintainers will review PRs when:
+All PRs should be submitted against `main`, and ideally should address an open issue, unless the change is small. Direct commits to main are blocked, and PRs require an approving review to merge into main. By convention, the Gradio maintainers will review PRs when:
 
 - An initial review has been requested
 - A clear, descriptive title has been assigned to the PR
@@ -217,26 +405,61 @@ All PRs should be against `main`, and ideally should address an open issue, unle
 
  🧹 We ask that you make sure initial CI checks are passing before requesting a review. One of the Gradio maintainers will merge the PR when all the checks are passing.  You can safely ignore the Vercel and Spaces checks, which only run under maintainers' pull requests.  
 
-Don't forget the format your code before pushing:
+Don't forget to format your code before pushing:
+
+<table>
+  <tr>
+  <th>MacOS / Linux</th>
+  <th>Windows</th>
+  </tr>
+  <tr>
+  <td>
 
 ```
 bash scripts/format_backend.sh
 ```
+  </td>
+  <td>
+  
+```bash
+scripts\format_backend.bat
+```
+  </td>
+  </tr>
+</table>
 
 And if you made changes to the frontend: 
+
+
+<table>
+  <tr>
+  <th>MacOS / Linux</th>
+  <th>Windows</th>
+  </tr>
+  <tr>
+  <td>
 
 ```
 bash scripts/format_frontend.sh
 ```
+  </td>
+  <td>
+  
+```bash
+scripts\format_frontend.bat
+```
+  </td>
+  </tr>
+</table>
 
 Thank you for taking the time to contribute to Gradio! 
 
 
-## ❓ Need help getting started?
+## ❓ Need help or have questions?
 
-- Browse [issues](https://github.com/gradio-app/gradio/issues?q=is%3Aopen+is%3Aissue+label%3A%22good+first+issue%22) with the "good first issue" label. These are issues we think are good for newcomers.
-- Ask the Gradio community in our [Discord](https://discord.com/invite/feTf9x3ZSB)
-- Raise an issue for a feature or a bug you want to tackle
+- [Open a detailed issue](https://github.com/gradio-app/gradio/issues/new/choose) for a bug or feature request — see the [guidelines above](#-the-best-way-to-contribute-open-a-great-issue).
+- Ask the Gradio community in our [Discord](https://discord.com/invite/feTf9x3ZSB).
+- Browse existing [issues](https://github.com/gradio-app/gradio/issues) to see if your problem has already been reported (and add a 👍 or extra reproduction details if so).
 
 ## 🚧 Troubleshooting
 `ERROR: Error loading ASGI app. Could not import module "<filename>"`
@@ -245,7 +468,7 @@ Verify that you've used the correct filename of your gradio app, and that you're
 
 ---
 
-```ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL @gradio/app@1.0.0 build:local: vite build --mode production:local --emptyOutDir "--emptyOutDir"```
+```ERR_PNPM_RECURSIVE_RUN_FIRST_FAIL @self/spa@1.0.0 build:local: vite build --mode production:local --emptyOutDir "--emptyOutDir"```
 
 Delete `/node_modules` and `pnpm-lock.yaml`:
 
@@ -256,11 +479,54 @@ rm pnpm-lock.yaml
 
 and run the install scripts:
 
+
+<table>
+  <tr>
+  <th>MacOS / Linux</th>
+  <th>Windows</th>
+  </tr>
+  <tr>
+  <td>
+
 ```
 bash scripts/install_gradio.sh
 bash scripts/build_frontend.sh
 ```
+
+To skip downloading assets used for offline support, pass
+`--no-download-offline-assets`.
+  </td>
+  <td>
+  
+```bash
+scripts\install_gradio.bat
+scripts\build_frontend.bat
+```
+
+To skip downloading assets used for offline support, pass
+`--no-download-offline-assets`.
+  </td>
+  </tr>
+</table>
+---
+
+```FATAL ERROR: Ineffective mark-compacts near heap limit Allocation failed - JavaScript heap out of memory``` when running `scripts/build_frontend.sh`.
+
+Run `scripts/build_frontend.sh` with the environment variable `NODE_OPTIONS=--max_old_space_size=8192` to increase the heap size.
+
+---
+
+In the case of:
+- Unexpected exceptions being thrown, or
+- The following warning:
+`IMPORTANT: You are using gradio version <earlier version>, however version <later version> is available, please upgrade.`
+
+ensure your `PYTHONPATH` includes the directory where the Gradio repository is cloned, e.g.:
+
+```export PYTHONPATH="./"```
+
+This ensures that when `gradio` is imported in a python program, it is this current version from this repository.
+
 ---
 
 _Could these guidelines be clearer? Feel free to open a PR to help us facilitate open-source contributions!_
-

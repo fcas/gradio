@@ -1,27 +1,43 @@
 <script lang="ts">
 	import type { SelectData } from "@gradio/utils";
-	import { createEventDispatcher } from "svelte";
 
-	export let value = false;
-	export let label = "Checkbox";
-	export let interactive: boolean;
+	let {
+		label = "Checkbox",
+		value = $bindable(),
+		indeterminate = false,
+		interactive = true,
+		show_label = true,
+		on_change,
+		on_input,
+		on_select
+	}: {
+		label?: string;
+		value?: boolean;
+		indeterminate?: boolean;
+		interactive?: boolean;
+		show_label?: boolean;
+		on_change?: (value: boolean) => void;
+		on_input?: () => void;
+		on_select?: (data: SelectData) => void;
+	} = $props();
 
-	const dispatch = createEventDispatcher<{
-		change: boolean;
-		select: SelectData;
-	}>();
+	let disabled = $derived(!interactive);
 
-	// When the value changes, dispatch the change event via handle_change()
-	// See the docs for an explanation: https://svelte.dev/docs/svelte-components#script-3-$-marks-a-statement-as-reactive
-	$: value, dispatch("change", value);
-	$: disabled = !interactive;
+	let old_value = $state(value);
+
+	$effect(() => {
+		if (old_value !== value) {
+			old_value = value;
+			on_change?.($state.snapshot(value as boolean));
+		}
+	});
 
 	async function handle_enter(
 		event: KeyboardEvent & { currentTarget: EventTarget & HTMLInputElement }
 	): Promise<void> {
 		if (event.key === "Enter") {
 			value = !value;
-			dispatch("select", {
+			on_select?.({
 				index: 0,
 				value: event.currentTarget.checked,
 				selected: event.currentTarget.checked
@@ -33,58 +49,72 @@
 		event: Event & { currentTarget: EventTarget & HTMLInputElement }
 	): Promise<void> {
 		value = event.currentTarget.checked;
-		dispatch("select", {
+		on_select?.({
 			index: 0,
 			value: event.currentTarget.checked,
 			selected: event.currentTarget.checked
 		});
+		on_input?.();
 	}
 </script>
 
-<label class:disabled>
+<label class="checkbox-container" class:disabled>
 	<input
 		bind:checked={value}
-		on:keydown={handle_enter}
-		on:input={handle_input}
+		bind:indeterminate
+		onkeydown={handle_enter}
+		oninput={handle_input}
 		{disabled}
 		type="checkbox"
 		name="test"
 		data-testid="checkbox"
 	/>
-	<span class="ml-2">{label}</span>
+	{#if show_label}
+		<span class="label-text">
+			{label}
+		</span>
+	{/if}
 </label>
 
 <style>
-	label {
+	.checkbox-container {
 		display: flex;
 		align-items: center;
+		gap: var(--spacing-lg);
 		cursor: pointer;
-		color: var(--body-text-color);
-		font-weight: var(--checkbox-label-text-weight);
-		font-size: var(--checkbox-label-text-size);
-		line-height: var(--line-md);
 	}
 
-	label > * + * {
-		margin-left: var(--size-2);
+	.label-text {
+		color: var(--body-text-color);
+		font-size: var(--checkbox-label-text-size);
+		line-height: var(--line-sm);
+	}
+
+	.info {
+		display: block;
+		color: var(--body-text-color-subdued);
+		font-size: var(--text-xs);
+		margin-top: var(--spacing-xs);
 	}
 
 	input {
 		--ring-color: transparent;
 		position: relative;
-		box-shadow: var(--input-shadow);
+		box-shadow: var(--checkbox-shadow);
 		border: 1px solid var(--checkbox-border-color);
 		border-radius: var(--checkbox-border-radius);
 		background-color: var(--checkbox-background-color);
 		line-height: var(--line-sm);
+		flex-shrink: 0;
+		z-index: 0;
 	}
 
 	input:checked,
 	input:checked:hover,
 	input:checked:focus {
-		border-color: var(--checkbox-border-color-selected);
 		background-image: var(--checkbox-check);
 		background-color: var(--checkbox-background-color-selected);
+		border-color: var(--checkbox-border-color-focus);
 	}
 
 	input:checked:focus {
@@ -103,8 +133,58 @@
 		background-color: var(--checkbox-background-color-focus);
 	}
 
-	input[disabled],
-	.disabled {
+	input:indeterminate {
+		background-image: none;
+		background-color: var(--checkbox-background-color-selected);
+		border-color: var(--checkbox-border-color-focus);
+		position: relative;
+	}
+
+	input:indeterminate::before {
+		content: "";
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 100%;
+		height: 100%;
+		z-index: 1;
+		border-radius: var(--checkbox-border-radius);
+		background-color: var(--checkbox-background-color-selected);
+	}
+
+	input:indeterminate::after {
+		content: "";
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		width: 8px;
+		height: 2px;
+		background-color: white;
+		z-index: 2;
+	}
+
+	input:indeterminate:hover {
+		background-color: var(--checkbox-background-color-selected);
+		border-color: var(--checkbox-border-color-hover);
+	}
+
+	input:indeterminate:focus {
+		background-color: var(--checkbox-background-color-selected);
+		border-color: var(--checkbox-border-color-focus);
+	}
+
+	input[disabled] {
 		cursor: not-allowed;
+		opacity: 0.75;
+	}
+
+	label.disabled {
+		cursor: not-allowed;
+	}
+
+	input:not([disabled]):hover {
+		cursor: pointer;
 	}
 </style>

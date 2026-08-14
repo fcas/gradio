@@ -2,9 +2,15 @@
 	import { onMount } from "svelte";
 	import WaveSurfer from "wavesurfer.js";
 
-	export let currentVolume = 1;
-	export let show_volume_slider = false;
-	export let waveform: WaveSurfer;
+	let {
+		currentVolume = $bindable(),
+		show_volume_slider = $bindable(),
+		waveform
+	}: {
+		currentVolume?: number;
+		show_volume_slider?: boolean;
+		waveform: WaveSurfer | undefined;
+	} = $props();
 
 	let volumeElement: HTMLInputElement;
 
@@ -17,11 +23,14 @@
 		if (!slider) return;
 
 		slider.style.background = `linear-gradient(to right, var(--color-accent) ${
-			currentVolume * 100
-		}%, var(--neutral-400) ${currentVolume * 100}%)`;
+			(currentVolume ?? 1) * 100
+		}%, var(--neutral-400) ${(currentVolume ?? 1) * 100}%)`;
 	};
 
-	$: currentVolume, adjustSlider();
+	$effect(() => {
+		currentVolume;
+		adjustSlider();
+	});
 </script>
 
 <input
@@ -32,12 +41,12 @@
 	min="0"
 	max="1"
 	step="0.01"
-	value={currentVolume}
-	on:focusout={() => (show_volume_slider = false)}
-	on:input={(e) => {
+	value={currentVolume ?? 1}
+	onfocusout={() => (show_volume_slider = false)}
+	oninput={(e) => {
 		if (e.target instanceof HTMLInputElement) {
 			currentVolume = parseFloat(e.target.value);
-			waveform.setVolume(currentVolume);
+			waveform?.setVolume(currentVolume);
 		}
 	}}
 />

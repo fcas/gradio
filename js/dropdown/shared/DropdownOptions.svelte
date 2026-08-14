@@ -1,26 +1,53 @@
 <script lang="ts">
 	import { fly } from "svelte/transition";
-	import { createEventDispatcher } from "svelte";
-	export let choices: [string, string | number][];
-	export let filtered_indices: number[];
-	export let show_options = false;
-	export let disabled = false;
-	export let selected_indices: (string | number)[] = [];
-	export let active_index: number | null = null;
+	let {
+		choices,
+		filtered_indices,
+		show_options = false,
+		disabled = false,
+		selected_indices = [],
+		active_index = null,
+		remember_scroll = false,
+		offset_from_top = 0,
+		from_top = false,
+		listbox_id = undefined,
+		onchange,
+		onload
+	}: {
+		choices: [string, string | number][];
+		filtered_indices: number[];
+		show_options: boolean;
+		disabled?: boolean;
+		selected_indices?: (string | number)[];
+		active_index: number | null;
+		remember_scroll?: boolean;
+		offset_from_top?: number;
+		from_top?: boolean;
+		listbox_id?: string;
+		onchange?: (index: any) => void;
+		onload?: () => void;
+	} = $props();
 
-	let distance_from_top: number;
-	let distance_from_bottom: number;
-	let input_height: number;
-	let input_width: number;
+	let distance_from_top = $state(0);
+	let distance_from_bottom = $state(0);
+	let input_height = $state(0);
+	let input_width = $state(0);
 	let refElement: HTMLDivElement;
 	let listElement: HTMLUListElement;
-	let top: string | null, bottom: string | null, max_height: number;
-	let innerHeight: number;
+	let top: string | null = $state(null);
+	let bottom: string | null = $state(null);
+	let max_height: number = $state(0);
+	let innerHeight = $state(0);
+	let list_scroll_y = 0;
 
 	function calculate_window_distance(): void {
 		const { top: ref_top, bottom: ref_bottom } =
 			refElement.getBoundingClientRect();
-		distance_from_top = ref_top;
+		if (from_top) {
+			distance_from_top = offset_from_top;
+		} else {
+			distance_from_top = ref_top;
+		}
 		distance_from_bottom = innerHeight - ref_bottom;
 	}
 
@@ -37,17 +64,25 @@
 		}, 10);
 	}
 
-	$: {
+	function restore_last_scroll(): void {
+		listElement?.scrollTo?.(0, list_scroll_y);
+	}
+
+	$effect(() => {
 		if (show_options && refElement) {
-			if (listElement && selected_indices.length > 0) {
-				let elements = listElement.querySelectorAll("li");
-				for (const element of Array.from(elements)) {
-					if (
-						element.getAttribute("data-index") ===
-						selected_indices[0].toString()
-					) {
-						listElement?.scrollTo?.(0, (element as HTMLLIElement).offsetTop);
-						break;
+			if (remember_scroll) {
+				restore_last_scroll();
+			} else {
+				if (listElement && selected_indices.length > 0) {
+					let elements = listElement.querySelectorAll("li");
+					for (const element of Array.from(elements)) {
+						if (
+							element.getAttribute("data-index") ===
+							selected_indices[0].toString()
+						) {
+							listElement?.scrollTo?.(0, (element as HTMLLIElement).offsetTop);
+							break;
+						}
 					}
 				}
 			}
@@ -55,8 +90,9 @@
 			const rect = refElement.parentElement?.getBoundingClientRect();
 			input_height = rect?.height || 0;
 			input_width = rect?.width || 0;
+			onload?.();
 		}
-		if (distance_from_bottom > distance_from_top) {
+		if (distance_from_bottom > distance_from_top || from_top) {
 			top = `${distance_from_top}px`;
 			max_height = distance_from_bottom;
 			bottom = null;
@@ -65,24 +101,27 @@
 			max_height = distance_from_top - input_height;
 			top = null;
 		}
-	}
-
-	const dispatch = createEventDispatcher();
+	});
 </script>
 
-<svelte:window on:scroll={scroll_listener} bind:innerHeight />
+<svelte:window onscroll={scroll_listener} bind:innerHeight />
 
 <div class="reference" bind:this={refElement} />
 {#if show_options && !disabled}
 	<ul
 		class="options"
 		transition:fly={{ duration: 200, y: 5 }}
-		on:mousedown|preventDefault={(e) => dispatch("change", e)}
+		onmousedown={(e) => {
+			e.preventDefault();
+			onchange?.((e.target as HTMLElement).dataset.index);
+		}}
+		onscroll={(e) => (list_scroll_y = e.currentTarget.scrollTop)}
 		style:top
 		style:bottom
 		style:max-height={`calc(${max_height}px - var(--window-padding))`}
 		style:width={input_width + "px"}
 		bind:this={listElement}
+		id={listbox_id}
 		role="listbox"
 	>
 		{#each filtered_indices as index}
@@ -94,6 +133,7 @@
 				class:dark:bg-gray-600={index === active_index}
 				style:width={input_width + "px"}
 				data-index={index}
+				id={listbox_id ? `${listbox_id}-option-${index}` : undefined}
 				aria-label={choices[index][0]}
 				data-testid="dropdown-option"
 				role="option"

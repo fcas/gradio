@@ -50,7 +50,6 @@ fake_barley = pd.DataFrame(
     }
 )
 
-
 def bar_plot_fn(display):
     if display == "simple":
         return gr.BarPlot(
@@ -76,9 +75,7 @@ def bar_plot_fn(display):
             x="year",
             y="yield",
             color="year",
-            group="site",
             title="Barley Yield by Year and Site",
-            group_title="",
             tooltip=["yield", "site", "year"],
         )
     elif display == "simple-horizontal":
@@ -90,7 +87,6 @@ def bar_plot_fn(display):
             y_title="Variable B",
             title="Simple Bar Plot with made up data",
             tooltip=["a", "b"],
-            vertical=False,
             y_lim=[20, 100],
         )
     elif display == "stacked-horizontal":
@@ -100,7 +96,6 @@ def bar_plot_fn(display):
             y="yield",
             color="site",
             title="Barley Yield Data",
-            vertical=False,
             tooltip=["variety", "site"],
         )
     elif display == "grouped-horizontal":
@@ -109,13 +104,9 @@ def bar_plot_fn(display):
             x="year",
             y="yield",
             color="year",
-            group="site",
             title="Barley Yield by Year and Site",
-            group_title="",
             tooltip=["yield", "site", "year"],
-            vertical=False,
         )
-
 
 with gr.Blocks() as bar_plot:
     with gr.Row():

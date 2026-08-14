@@ -5,7 +5,6 @@ from gradio.themes.base import Base
 from gradio.themes.utils import colors, fonts, sizes
 import time
 
-
 class Seafoam(Base):
     def __init__(
         self,
@@ -42,10 +41,9 @@ class Seafoam(Base):
             font_mono=font_mono,
         )
 
-
 seafoam = Seafoam()
 
-with gr.Blocks(theme=seafoam) as demo:
+with gr.Blocks() as demo:
     textbox = gr.Textbox(label="Name")
     slider = gr.Slider(label="Count", minimum=0, maximum=100, step=1)
     with gr.Row():
@@ -60,4 +58,4 @@ with gr.Blocks(theme=seafoam) as demo:
     button.click(repeat, [textbox, slider], output)
 
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(theme=seafoam)

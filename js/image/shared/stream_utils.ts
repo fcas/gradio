@@ -6,28 +6,29 @@ export function handle_error(error: string): void {
 	throw new Error(error);
 }
 
-export function set_local_stream(
+export async function set_local_stream(
 	local_stream: MediaStream | null,
 	video_source: HTMLVideoElement
-): void {
+): Promise<void> {
 	video_source.srcObject = local_stream;
 	video_source.muted = true;
-	video_source.play();
+	await video_source.play();
 }
 
 export async function get_video_stream(
 	include_audio: boolean,
 	video_source: HTMLVideoElement,
+	webcam_constraints?: { [key: string]: any } | null,
 	device_id?: string
 ): Promise<MediaStream> {
-	const size = {
-		width: { ideal: 1920 },
-		height: { ideal: 1440 }
-	};
-
-	const constraints = {
-		video: device_id ? { deviceId: { exact: device_id }, ...size } : size,
-		audio: include_audio
+	const constraints: MediaStreamConstraints = {
+		video: device_id
+			? { deviceId: { exact: device_id }, ...webcam_constraints?.video }
+			: webcam_constraints?.video || {
+					width: { ideal: 1920 },
+					height: { ideal: 1440 }
+				},
+		audio: include_audio && (webcam_constraints?.audio ?? true) // Defaults to true if not specified
 	};
 
 	return navigator.mediaDevices

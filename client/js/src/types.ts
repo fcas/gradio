@@ -1,6 +1,8 @@
 // API Data Types
 
 import { hardware_types } from "./helpers/spaces";
+import type { SvelteComponent } from "svelte";
+import type { ComponentType } from "svelte";
 
 export interface ApiData {
 	label: string;
@@ -34,6 +36,8 @@ export interface EndpointInfo<T extends ApiData | JsApiData> {
 	parameters: T[];
 	returns: T[];
 	type?: DependencyTypes;
+	/** Set when the endpoint's function takes a `gr.OAuthToken`. */
+	oauth_token?: "required" | "optional";
 }
 
 export interface ApiInfo<T extends ApiData | JsApiData> {
@@ -49,27 +53,43 @@ export interface BlobRef {
 
 export type DataType = string | Buffer | Record<string, any> | any[];
 
+// custom class used for uploading local files
+export class Command {
+	type: string;
+	command: string;
+	meta: {
+		path: string;
+		name: string;
+		orig_path: string;
+	};
+	fileData?: FileData;
+
+	constructor(
+		command: string,
+		meta: { path: string; name: string; orig_path: string }
+	) {
+		this.type = "command";
+		this.command = command;
+		this.meta = meta;
+	}
+}
+
 // Function Signature Types
 
 export type SubmitFunction = (
 	endpoint: string | number,
-	data: unknown[] | Record<string, unknown>,
+	data?: unknown[] | Record<string, unknown>,
 	event_data?: unknown,
-	trigger_id?: number | null
-) => SubmitReturn;
+	trigger_id?: number | null,
+	all_events?: boolean,
+	additional_headers?: Record<string, string>
+) => SubmitIterable<GradioEvent>;
 
-export type PredictFunction = (
+export type PredictFunction = <T = unknown>(
 	endpoint: string | number,
-	data: unknown[] | Record<string, unknown>,
+	data?: unknown[] | Record<string, unknown>,
 	event_data?: unknown
-) => Promise<SubmitReturn>;
-
-// Event and Submission Types
-
-type event = <K extends EventType>(
-	eventType: K,
-	listener: EventListener<K>
-) => SubmitReturn;
+) => Promise<PredictReturn<T>>;
 
 export type client_return = {
 	config: Config | undefined;
@@ -83,11 +103,24 @@ export type client_return = {
 	view_api: (_fetch: typeof fetch) => Promise<ApiInfo<JsApiData>>;
 };
 
-export type SubmitReturn = {
-	on: event;
-	off: event;
+export interface SubmitIterable<T> extends AsyncIterable<T> {
+	[Symbol.asyncIterator](): SubmitIterable<T>;
+	next: () => Promise<IteratorResult<T, unknown>>;
+	throw: (value: unknown) => Promise<IteratorResult<T, unknown>>;
+	return: () => Promise<IteratorReturnResult<undefined>>;
 	cancel: () => Promise<void>;
-	destroy: () => void;
+	event_id: () => string;
+	send_chunk: (payload: Record<string, unknown>) => void;
+	wait_for_id: () => Promise<string | null>;
+	close_stream: () => void;
+}
+
+export type PredictReturn<T = unknown> = {
+	type: EventType;
+	time: Date;
+	data: T;
+	endpoint: string;
+	fn_index: number;
 };
 
 // Space Status Types
@@ -95,12 +128,19 @@ export type SubmitReturn = {
 export type SpaceStatus = SpaceStatusNormal | SpaceStatusError;
 
 export interface SpaceStatusNormal {
-	status: "sleeping" | "running" | "building" | "error" | "stopped";
+	status:
+		| "sleeping"
+		| "running"
+		| "building"
+		| "error"
+		| "stopped"
+		| "starting";
 	detail:
 		| "SLEEPING"
 		| "RUNNING"
 		| "RUNNING_BUILDING"
 		| "BUILDING"
+		| "APP_STARTING"
 		| "NOT_FOUND";
 	load_status: "pending" | "error" | "complete" | "generating";
 	message: string;
@@ -124,20 +164,23 @@ export type SpaceStatusCallback = (a: SpaceStatus) => void;
 // Configuration and Response Types
 // --------------------------------
 export interface Config {
-	auth_required: boolean;
+	deep_link_state?: "none" | "valid" | "invalid";
+	auth_required?: true;
+	app_id?: string;
 	analytics_enabled: boolean;
 	connect_heartbeat: boolean;
+	dev_mode: boolean;
+	vibe_mode: boolean;
 	auth_message: string;
-	components: any[];
+	components: ComponentMeta[];
 	css: string | null;
 	js: string | null;
 	head: string | null;
 	dependencies: Dependency[];
-	dev_mode: boolean;
 	enable_queue: boolean;
 	show_error: boolean;
 	layout: any;
-	mode: "blocks" | "interface";
+	mode: "blocks" | "interface" | "chat_interface";
 	root: string;
 	root_url?: string;
 	theme: string;
@@ -146,14 +189,78 @@ export interface Config {
 	space_id: string | null;
 	is_space: boolean;
 	is_colab: boolean;
-	show_api: boolean;
+	footer_links: string[];
 	stylesheets: string[];
-	path: string;
+	current_page: string;
+	page: Record<
+		string,
+		{
+			components: number[];
+			dependencies: number[];
+			layout: any;
+		}
+	>;
+	pages: [string, string, boolean][];
 	protocol: "sse_v3" | "sse_v2.1" | "sse_v2" | "sse_v1" | "sse" | "ws";
 	max_file_size?: number;
+	theme_hash?: number;
+	username: string | null;
+	api_prefix?: string;
+	fill_height?: boolean;
+	fill_width?: boolean;
+	pwa?: boolean;
+	i18n_translations?: Record<string, Record<string, string>> | null;
+	mcp_server?: boolean;
+	/**
+	 * Whether the app permits its runs being saved in the browser. Set from
+	 * `run_history` on `launch()`; absent on apps served by older versions of
+	 * Gradio, which is treated as permitted.
+	 */
+	run_history?: boolean;
+}
+
+// todo: DRY up types
+export interface ComponentMeta {
+	type: string;
+	id: number;
+	has_modes: boolean;
+	props: SharedProps;
+	instance: SvelteComponent;
+	component: ComponentType<SvelteComponent>;
+	documentation?: Documentation;
+	children?: ComponentMeta[];
+	parent?: ComponentMeta;
+	value?: any;
+	component_class_id: string;
+	key: string | number | null;
+	rendered_in?: number;
+}
+
+interface SharedProps {
+	elem_id?: string;
+	elem_classes?: string[];
+	components?: string[];
+	server_fns?: string[];
+	interactive: boolean;
+	visible: boolean | "hidden";
+	[key: string]: unknown;
+	root_url?: string;
+}
+
+export interface Documentation {
+	type?: TypeDescription;
+	description?: TypeDescription;
+	example_data?: string;
+}
+
+interface TypeDescription {
+	input_payload?: string;
+	response_object?: string;
+	payload?: string;
 }
 
 export interface Dependency {
+	id: number;
 	targets: [number, string][];
 	inputs: number[];
 	outputs: number[];
@@ -163,6 +270,7 @@ export interface Dependency {
 	trigger: "click" | "load" | string;
 	max_batch_size: number;
 	show_progress: "full" | "minimal" | "hidden";
+	show_progress_on: number[] | null;
 	frontend_fn: ((...args: unknown[]) => Promise<unknown[]>) | null;
 	status?: string;
 	queue: boolean | null;
@@ -175,15 +283,24 @@ export interface Dependency {
 	pending_request?: boolean;
 	trigger_after?: number;
 	trigger_only_on_success?: boolean;
+	trigger_only_on_failure?: boolean;
 	trigger_mode: "once" | "multiple" | "always_last";
 	final_event: Payload | null;
-	show_api: boolean;
-	zerogpu?: boolean;
+	api_visibility: "public" | "private" | "undocumented";
+	rendered_in: number | null;
+	render_id: number | null;
+	connection: "stream" | "sse";
+	time_limit: number;
+	stream_every: number;
+	like_user_message: boolean;
+	event_specific_args: string[];
+	component_prop_inputs: number[];
+	js_implementation: string | null;
 }
 
 export interface DependencyTypes {
-	continuous: boolean;
 	generator: boolean;
+	cancel: boolean;
 }
 
 export interface Payload {
@@ -192,6 +309,7 @@ export interface Payload {
 	time?: Date;
 	event_data?: unknown;
 	trigger_id?: number | null;
+	oauth_token?: string;
 }
 
 export interface PostResponse {
@@ -213,8 +331,36 @@ export interface DuplicateOptions extends ClientOptions {
 }
 
 export interface ClientOptions {
+	token?: `hf_${string}`;
+	/**
+	 * @deprecated Use `token` instead. Kept as an alias so that code written
+	 * for older versions of the client keeps working.
+	 */
 	hf_token?: `hf_${string}`;
 	status_callback?: SpaceStatusCallback | null;
+	auth?: [string, string] | null;
+	with_null_state?: boolean;
+	events?: EventType[];
+	headers?: Record<string, string> | Headers;
+	query_params?: Record<string, string>;
+	session_hash?: string;
+	cookies?: string;
+	credentials?: RequestCredentials;
+	/**
+	 * A Hugging Face token passed to the app's own code, for endpoints whose
+	 * function takes a `gr.OAuthToken`. Unlike `token`, which only authenticates
+	 * you to the app, this lets the app act on your behalf, so it is sent only to
+	 * endpoints that declare they need it.
+	 */
+	oauth_token?: string;
+	/**
+	 * Whether to save each call's inputs and outputs in this browser's local
+	 * storage, so they can be reviewed on the app's run history page. Defaults
+	 * to true, and only ever applies in a browser: in Node there is no storage
+	 * to write to and nothing is recorded. The app can turn it off for everyone
+	 * with `run_history=False` on `launch()`, which takes precedence over this.
+	 */
+	record_history?: boolean;
 }
 
 export interface FileData {
@@ -233,41 +379,48 @@ export interface FileData {
 export type EventType = "data" | "status" | "log" | "render";
 
 export interface EventMap {
-	data: Payload;
-	status: Status;
+	data: PayloadMessage;
+	status: StatusMessage;
 	log: LogMessage;
 	render: RenderMessage;
 }
 
-export type Event<K extends EventType> = {
-	[P in K]: EventMap[P] & { type: P; endpoint: string; fn_index: number };
-}[K];
-export type EventListener<K extends EventType> = (event: Event<K>) => void;
-export type ListenerMap<K extends EventType> = {
-	[P in K]?: EventListener<K>[];
-};
-export interface LogMessage {
+export type GradioEvent = {
+	[P in EventType]: EventMap[P];
+}[EventType];
+
+export interface Log {
 	log: string;
-	level: "warning" | "info";
+	title: string;
+	level: "warning" | "info" | "success" | "error";
 }
-export interface RenderMessage {
-	fn_index: number;
+export interface Render {
 	data: {
 		components: any[];
 		layout: any;
+		dependencies: Dependency[];
+		render_id: number;
 	};
+}
+
+export interface ValidationError {
+	is_valid: boolean;
+	message: string;
 }
 
 export interface Status {
 	queue: boolean;
 	code?: string;
 	success?: boolean;
-	stage: "pending" | "error" | "complete" | "generating";
+	stage: "pending" | "error" | "complete" | "generating" | "streaming";
+	duration?: number;
+	visible?: boolean;
 	broken?: boolean;
 	size?: number;
 	position?: number;
 	eta?: number;
-	message?: string;
+	title?: string;
+	message?: string | ValidationError[];
 	progress_data?: {
 		progress: number | null;
 		index: number | null;
@@ -276,4 +429,37 @@ export interface Status {
 		desc: string | null;
 	}[];
 	time?: Date;
+	changed_state_ids?: number[];
+	time_limit?: number;
+	session_not_found?: boolean;
+	used_cache?: "full" | "partial" | null;
+	cache_duration?: number;
+	avg_time?: number;
+}
+
+export interface StatusMessage extends Status {
+	type: "status";
+	endpoint: string;
+	fn_index: number;
+	original_msg?: string;
+}
+
+export interface PayloadMessage extends Payload {
+	type: "data";
+	endpoint: string;
+	fn_index: number;
+}
+
+export interface LogMessage extends Log {
+	type: "log";
+	endpoint: string;
+	fn_index: number;
+	duration: number | null;
+	visible: boolean;
+}
+
+export interface RenderMessage extends Render {
+	type: "render";
+	endpoint: string;
+	fn_index: number;
 }

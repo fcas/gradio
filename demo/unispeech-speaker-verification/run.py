@@ -1,6 +1,7 @@
+# type: ignore
 import gradio as gr
 import torch
-from torchaudio.sox_effects import apply_effects_file
+from torchaudio.sox_effects import apply_effects_file  # type: ignore
 from transformers import AutoFeatureExtractor, AutoModelForAudioXVector
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -49,7 +50,6 @@ feature_extractor = AutoFeatureExtractor.from_pretrained(model_name)
 model = AutoModelForAudioXVector.from_pretrained(model_name).to(device)
 cosine_sim = torch.nn.CosineSimilarity(dim=-1)
 
-
 def similarity_fn(path1, path2):
     if not (path1 and path2):
         return '<b style="color:red">ERROR: Please record audio for *both* speakers!</b>'
@@ -74,13 +74,11 @@ def similarity_fn(path1, path2):
 
     return output
 
-
 inputs = [
     gr.Audio(sources=["microphone"], type="filepath", label="Speaker #1"),
     gr.Audio(sources=["microphone"], type="filepath", label="Speaker #2"),
 ]
 output = gr.HTML(label="")
-
 
 description = (
     "This demo will compare two speech samples and determine if they are from the same speaker. "
@@ -108,9 +106,10 @@ demo = gr.Interface(
     title="Voice Authentication with UniSpeech-SAT + X-Vectors",
     description=description,
     article=article,
-    allow_flagging="never",
+    flagging_mode="never",
     live=False,
     examples=examples,
+    api_name="predict",
 )
 
 if __name__ == "__main__":

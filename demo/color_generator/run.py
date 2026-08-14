@@ -1,8 +1,7 @@
 import gradio as gr
-import cv2
+import cv2  # type: ignore
 import numpy as np
 import random
-
 
 # Convert decimal color to hexadecimal color
 def RGB_to_Hex(rgb):
@@ -12,7 +11,6 @@ def RGB_to_Hex(rgb):
         color += str(hex(num))[-2:].replace("x", "0").upper()
     return color
 
-
 # Randomly generate light or dark colors
 def random_color(is_light=True):
     return (
@@ -21,12 +19,8 @@ def random_color(is_light=True):
         random.randint(0, 127) + int(is_light) * 128,
     )
 
-
 def switch_color(color_style):
-    if color_style == "light":
-        is_light = True
-    elif color_style == "dark":
-        is_light = False
+    is_light = color_style == "light"
     back_color_ = random_color(is_light)  # Randomly generate colors
     back_color = RGB_to_Hex(back_color_)  # Convert to hexadecimal
 
@@ -36,7 +30,6 @@ def switch_color(color_style):
     cv2.rectangle(img, (0, 0), (w, h), back_color_, thickness=-1)
 
     return back_color, back_color, img
-
 
 inputs = [gr.Radio(["light", "dark"], value="light")]
 
@@ -57,6 +50,7 @@ demo = gr.Interface(
     outputs=outputs,
     title=title,
     description=description,
+    api_name="predict",
 )
 
 if __name__ == "__main__":

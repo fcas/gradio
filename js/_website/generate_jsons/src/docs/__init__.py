@@ -1,20 +1,24 @@
 import html
 import json
 import os
+import re
+import requests
+import base64
+import urllib.parse
+
+
 
 from gradio_client.documentation import document_cls, generate_documentation
 import gradio
-from ..guides import guides
-
-import requests
+from ..guides import guides, guide_names
 
 DIR = os.path.dirname(__file__)
 DEMOS_DIR = os.path.abspath(os.path.join(DIR, "../../../../../demo"))
 JS_CLIENT_README = os.path.abspath(os.path.join(DIR, "../../../../../client/js/README.md"))
 JS_DIR = os.path.abspath(os.path.join(DIR, "../../../../../js/"))
+TEMPLATES_DIR = os.path.abspath(os.path.join(DIR, "../../../src/lib/templates"))
 
 docs = generate_documentation()
-docs["component"].sort(key=lambda x: x["name"])
 
 def add_component_shortcuts():
     for component in docs["component"]:
@@ -27,6 +31,8 @@ def add_component_shortcuts():
                 "Uses default values",
             )
         ]
+        if not hasattr(component["class"], "__subclasses__"):
+            continue
         for subcls in component["class"].__subclasses__():
             if getattr(subcls, "is_template", False):
                 _, tags, _ = document_cls(subcls)
@@ -53,6 +59,7 @@ def add_demos():
                 demo_file = os.path.join(DEMOS_DIR, demo, "run.py")
                 with open(demo_file) as run_py:
                     demo_code = run_py.read()
+                    demo_code = demo_code.replace("# type: ignore", "")
                 cls["demos"].append((demo, demo_code))
 
 
@@ -63,12 +70,13 @@ def create_events_matrix():
     component_events = {}
     for component in docs["component"]:
         component_event_list = []
-        for event in component["class"].EVENTS:
-            events.add(event)
-            for fn in component["fns"]:
-                if event == fn["name"]:
-                    component_event_list.append(event)
-        component_events[component["name"]] = component_event_list
+        if hasattr(component["class"], 'EVENTS'):
+            for event in component["class"].EVENTS:
+                events.add(event)
+                for fn in component["fns"]:
+                    if event == fn["name"]:
+                        component_event_list.append(event)
+            component_events[component["name"]] = component_event_list
     
     
     return list(events), component_events
@@ -107,9 +115,6 @@ def escape_parameters(parameters):
 def escape_html_string_fields():
     for mode in docs:
         for cls in docs[mode]:
-            # print(cls["description"])
-            # cls["description"] = html.escape(cls["description"])
-            # print(cls["description"])
             for tag in [
                 "preprocessing",
                 "postprocessing",
@@ -124,25 +129,8 @@ def escape_html_string_fields():
             for fn in cls["fns"]:
                 fn["description"] = html.escape(fn["description"])
                 fn["parameters"] = escape_parameters(fn["parameters"])
-            # 1/0
 
 escape_html_string_fields()
-
-
-def override_signature(name, signature):
-    for mode in docs:
-        for cls in docs[mode]:
-            if cls["name"] == name:
-                cls["override_signature"] = signature
-
-
-override_signature("Blocks", "with gradio.Blocks():")
-override_signature("Row", "with gradio.Row():")
-override_signature("Column", "with gradio.Column():")
-override_signature("Tab", "with gradio.Tab():")
-override_signature("Group", "with gradio.Group():")
-override_signature("Dataset", "gr.Dataset(components, samples)")
-
 
 def find_cls(target_cls):
     for mode in docs:
@@ -154,16 +142,17 @@ def find_cls(target_cls):
 
 def organize_docs(d):
     organized = {
-        "building": {},
-        "components": {},
-        "helpers": {},
-        "modals": {},
-        "routes": {},
-        "events": {},
-        "py-client": {},
-        "chatinterface": {}
+        "gradio": {
+            "building": {},
+            "components": {},
+            "helpers": {},
+            "modals": {},
+            "routes": {},
+            "events": {},
+            "chatinterface": {}
+        },
+        "python-client": {}
     }
-    pages = []
     for mode in d:
         for c in d[mode]:
             c["parent"] = "gradio"
@@ -182,137 +171,60 @@ def organize_docs(d):
                     if "default" in p:
                         p["default"] = str(p["default"])
             if mode == "component":
-                organized["components"][c["name"].lower()] = c
-                pages.append(c["name"].lower())
-            elif mode in ["helpers", "routes", "py-client", "chatinterface", "modals"]:
-                organized[mode][c["name"].lower()] = c
-                pages.append(c["name"].lower())
-                
+                target = organized["gradio"]["components"]
+            elif mode == "py-client":
+                target = organized["python-client"]
+            elif mode in ["helpers", "routes", "chatinterface", "modals"]:
+                target = organized["gradio"][mode]
             else:
-                # if mode not in organized["building"]:
-                #     organized["building"][mode] = {}
-                organized["building"][c["name"].lower()] = c
-                pages.append(c["name"].lower())
-
-    c_keys = list(organized["components"].keys())
-    for i, cls in enumerate(organized["components"]):
-        if not i:
-            organized["components"][cls]["prev_obj"] = "Components"
-            organized["components"][cls]["next_obj"] = organized["components"][
-                c_keys[1]
-            ]["name"]
-        elif i == len(c_keys) - 1:
-            organized["components"][cls]["prev_obj"] = organized["components"][
-                c_keys[len(c_keys) - 2]
-            ]["name"]
-            organized["components"][cls]["next_obj"] = "load"
-        else:
-            organized["components"][cls]["prev_obj"] = organized["components"][
-                c_keys[i - 1]
-            ]["name"]
-            organized["components"][cls]["next_obj"] = organized["components"][
-                c_keys[i + 1]
-            ]["name"]
-    c_keys = list(organized["helpers"].keys())
-    for i, cls in enumerate(organized["helpers"]):
-        if not i:
-            organized["helpers"][cls]["prev_obj"] = "Video"
-            organized["helpers"][cls]["next_obj"] = organized["helpers"][c_keys[1]][
-                "name"
-            ]
-        elif i == len(c_keys) - 1:
-            organized["helpers"][cls]["prev_obj"] = organized["helpers"][
-                c_keys[len(c_keys) - 2]
-            ]["name"]
-            organized["helpers"][cls]["next_obj"] = "Error"
-        else:
-            organized["helpers"][cls]["prev_obj"] = organized["helpers"][c_keys[i - 1]][
-                "name"
-            ]
-            organized["helpers"][cls]["next_obj"] = organized["helpers"][c_keys[i + 1]][
-                "name"
-            ]
-    c_keys = list(organized["modals"].keys())
-    for i, cls in enumerate(organized["modals"]):
-        if not i:
-            organized["modals"][cls]["prev_obj"] = "EventData"
-            organized["modals"][cls]["next_obj"] = organized["modals"][c_keys[1]][
-                "name"
-            ]
-        elif i == len(c_keys) - 1:
-            organized["modals"][cls]["prev_obj"] = organized["modals"][
-                c_keys[len(c_keys) - 2]
-            ]["name"]
-            organized["modals"][cls]["next_obj"] = "Request"
-        else:
-            organized["modals"][cls]["prev_obj"] = organized["modals"][c_keys[i - 1]][
-                "name"
-            ]
-            organized["modals"][cls]["next_obj"] = organized["modals"][c_keys[i + 1]][
-                "name"
-            ]
-
-    c_keys = list(organized["routes"].keys())
-    for i, cls in enumerate(organized["routes"]):
-        if not i:
-            organized["routes"][cls]["prev_obj"] = "Info"
-            organized["routes"][cls]["next_obj"] = organized["routes"][c_keys[1]][
-                "name"
-            ]
-        elif i == len(c_keys) - 1:
-            organized["routes"][cls]["prev_obj"] = organized["routes"][
-                c_keys[len(c_keys) - 2]
-            ]["name"]
-            organized["routes"][cls]["next_obj"] = "Flagging"
-        else:
-            organized["routes"][cls]["prev_obj"] = organized["routes"][c_keys[i - 1]][
-                "name"
-            ]
-            organized["routes"][cls]["next_obj"] = organized["routes"][c_keys[i + 1]][
-                "name"
-            ]
-    c_keys = list(organized["py-client"].keys())
-    for i, cls in enumerate(organized["py-client"]):
-        if not i:
-            organized["py-client"][cls]["prev_obj"] = "Intro"
-            organized["py-client"][cls]["next_obj"] = organized["py-client"][c_keys[1]][
-                "name"
-            ]
-        elif i == len(c_keys) - 1:
-            organized["py-client"][cls]["prev_obj"] = organized["py-client"][
-                c_keys[len(c_keys) - 2]
-            ]["name"]
-        else:
-            organized["py-client"][cls]["prev_obj"] = organized["py-client"][
-                c_keys[i - 1]
-            ]["name"]
-            organized["py-client"][cls]["next_obj"] = organized["py-client"][
-                c_keys[i + 1]
-            ]["name"]
-    
-    for cls in organized["chatinterface"]:
-        organized["chatinterface"][cls]["prev_obj"] = "Block-Layouts"
-        organized["chatinterface"][cls]["next_obj"] = "Themes"
-
-    layout_keys = ["row", "column", "tab", "group", "accordion"]
-    for i, cls in enumerate(layout_keys):
-        if not i:
-            organized["building"][cls]["prev_obj"] = "Blocks"
-            organized["building"][cls]["next_obj"] = layout_keys[i+1].capitalize()
-        elif i == len(layout_keys) - 1:
-            organized["building"][cls]["prev_obj"] = layout_keys[i-1].capitalize()
-            organized["building"][cls]["next_obj"] = "Components"
-        else:
-            organized["building"][cls]["prev_obj"] = layout_keys[i-1].capitalize()
-            organized["building"][cls]["next_obj"] = layout_keys[i+1].capitalize()
-
-
-    organized["building"][cls]["prev_obj"]
+                target = organized["gradio"]["building"]
+            key = c["name"].lower()
+            if key in target:
+                if c["name"] != c["name"].lower():
+                    key = key + "-class"
+                else:
+                    target[key + "-class"] = target.pop(key)
+            target[key] = c
     
 
+    def format_name(page_name):
+        index = None
+        page_path = page_name
+        if re.match("^[0-9]+_", page_name):
+            index = int(page_name[: page_name.index("_")])
+            page_name = page_name[page_name.index("_") + 1 :]
+        if page_name.lower().endswith(".svx"):
+            page_name = page_name[:-4]
+        pretty_page_name = " ".join([word[0].upper() + word[1:] for word in page_name.split("-")])
+        for library in organized:
+            for category in organized[library]:
+                if page_name in organized[library][category]:
+                    return index, page_name, organized[library][category][page_name]["name"], page_path
+        if page_name == "chatinterface": 
+            pretty_page_name =  "ChatInterface"              
+        return index, page_name, pretty_page_name, page_path
+    
+    
+    def organize_pages(): 
+        pages = {"gradio": [], "python-client": [], "third-party-clients": []}
+        absolute_index = -1;
+        for library in pages:
+            library_templates_dir = os.path.join(TEMPLATES_DIR, library)
+            page_folders = sorted(os.listdir(library_templates_dir))
+            for page_folder in page_folders:
+                page_list = sorted(os.listdir(os.path.join(library_templates_dir, page_folder)))
+                _, page_category, pretty_page_category, category_path = format_name(page_folder)
+                category_path = os.path.join(library, category_path)
+                pages[library].append({"category": pretty_page_category, "pages": []})
+                for page_file in page_list:
+                    page_index, page_name, pretty_page_name, page_path = format_name(page_file)
+                    pages[library][-1]["pages"].append({"name": page_name, "pretty_name": pretty_page_name, "path": os.path.join(category_path, page_path), "page_index": page_index, "abolute_index": absolute_index + 1})
+        return pages
 
-    organized["events_matrix"] = component_events
-    organized["events"] = events
+    pages = organize_pages()
+
+    organized["gradio"]["events_matrix"] = component_events
+    organized["gradio"]["events"] = events
 
     js = {}
     js_pages = []
@@ -328,12 +240,13 @@ def organize_docs(d):
                 with open(os.path.join(JS_DIR, js_component, "README.md")) as f:
                     readme_content = f.read()
 
-                try: 
+                try:
                     latest_npm = requests.get(f"https://registry.npmjs.org/@gradio/{js_component}/latest").json()["version"]
                     latest_npm = f" [v{latest_npm}](https://www.npmjs.com/package/@gradio/{js_component})"
                     readme_content = readme_content.split("\n")
                     readme_content = "\n".join([readme_content[0], latest_npm, *readme_content[1:]])
-                except TypeError:
+                except TypeError or KeyError: 
+                    # KeyError because gradio 5 docs still looking for deprecated components
                     pass
 
                 js[js_component] = readme_content
@@ -348,12 +261,163 @@ def organize_docs(d):
 
     js_pages.sort()
 
-
     return {"docs": organized, "pages": pages, "js": js, "js_pages": js_pages, "js_client": readme_content}
 
 
 docs = organize_docs(docs)
 
+gradio_docs = docs["docs"]["gradio"]
+
+SYSTEM_PROMPT = ""
+
+FALLBACK_PROMPT = SYSTEM_PROMPT
+
+FALLBACK_PROMPT += "# API Reference: \n\nBelow are all the class and function signatures in the Gradio library. \n\n"
+
+for key in gradio_docs:
+    if key in ["events", "events_matrix"]:
+        continue
+    if "name" in key:
+        o = gradio_docs[key]
+        signature = f"""{o['name']}({', '.join([
+            p['name'] + 
+            ': ' + p['annotation']
+            + (' = ' + p['default'] if 'default' in p else '')
+            for p in o['parameters']])})"""
+        FALLBACK_PROMPT += f"{signature}\n"
+        FALLBACK_PROMPT += f"{o['description']}\n\n"
+
+    else: 
+        for c in gradio_docs[key]:
+            o = gradio_docs[key][c]
+            signature = f"""{o['name']}({', '.join([
+                p['name'] + 
+                ': ' + p['annotation']
+                + (' = ' + p['default'] if 'default' in p else '')
+                for p in o['parameters']])})"""          
+            FALLBACK_PROMPT += f"{signature}\n"
+            FALLBACK_PROMPT += f"{o['description']}\n\n"
+            if "fns" in o and key != "components":
+                for f in o["fns"]:
+                    signature = f"""{o['name']}.{f['name']}({', '.join([
+                        p['name'] + 
+                        ': ' + p['annotation']
+                        + (' = ' + p['default'] if 'default' in p else '')
+                        for p in f['parameters']])})"""
+                    FALLBACK_PROMPT += f"{signature}\n"
+                    FALLBACK_PROMPT += f"{f['description']}\n\n"
+
+FALLBACK_PROMPT += "\nEvent listeners allow Gradio to respond to user interactions with the UI components defined in a Blocks app. When a user interacts with an element, such as changing a slider value or uploading an image, a function is called.\n"
+
+FALLBACK_PROMPT += "All event listeners have the same signature:\n"
+
+f = gradio_docs["components"]["audio"]["fns"][0]
+signature = f"""<component_name>.<event_name>({', '.join([
+                        p['name'] + 
+                        ': ' + p['annotation']
+                        + (' = ' + p['default'] if 'default' in p else '')
+                        for p in f['parameters']])})"""
+FALLBACK_PROMPT += signature
+FALLBACK_PROMPT += "\nEach component only supports some specific events. Below is a list of all gradio components and every event that each component supports. If an event is supported by a component, it is a valid method of the component."
+for component in gradio_docs["events_matrix"]:
+    FALLBACK_PROMPT += f"{component}: {', '.join(gradio_docs['events_matrix'][component])}\n\n"
+
+SYSTEM_PROMPT += "Below are examples of full end-to-end Gradio apps:\n\n"
+FALLBACK_PROMPT += "End to End Demos: \nBelow are examples of full end-to-end Gradio apps:\n\n"
+
+
+# 'audio_component_events', 'audio_mixer', 'blocks_essay', 'blocks_chained_events', 'blocks_xray', 'chatbot_multimodal', 'sentence_builder', 'custom_css', 'blocks_update', 'fake_gan'
+# important_demos = ["annotatedimage_component", "blocks_essay_simple", "blocks_flipper", "blocks_form", "blocks_hello", "blocks_js_load", "blocks_js_methods", "blocks_kinematics", "blocks_layout", "blocks_plug", "blocks_simple_squares", "calculator", "chatbot_consecutive", "chatbot_simple", "chatbot_streaming", "chatinterface_multimodal", "datetimes", "diff_texts", "dropdown_key_up", "fake_diffusion", "fake_gan", "filter_records", "function_values", "gallery_component_events", "generate_tone", "hangman", "hello_blocks", "hello_blocks_decorator", "hello_world", "image_editor", "matrix_transpose", "model3D", "on_listener_decorator", "plot_component", "render_merge", "render_split", "reverse_audio_2", "sales_projections", "sepia_filter", "sort_records", "streaming_simple", "tabbed_interface_lite", "tax_calculator", "theme_soft", "timer", "timer_simple", "variable_outputs", "video_identity"]
+important_demos = ['custom_css', "annotatedimage_component", "blocks_essay_simple", "blocks_flipper", "blocks_form", "blocks_hello", "blocks_js_load", "blocks_js_methods", "blocks_kinematics", "blocks_layout", "blocks_plug", "blocks_simple_squares", "calculator", "chatbot_consecutive", "chatbot_simple", "chatbot_streaming", "datetimes", "diff_texts", "dropdown_key_up", "fake_diffusion", "filter_records", "function_values", "gallery_component_events", "generate_tone", "hangman", "hello_blocks", "hello_blocks_decorator", "hello_world", "image_editor", "matrix_transpose", "model3D", "on_listener_decorator", "plot_component", "render_merge", "render_split", "reverse_audio_2", "sepia_filter", "sort_records", "streaming_simple", "tabbed_interface_lite", "tax_calculator", "theme_soft", "timer", "timer_simple", "variable_outputs", "video_identity"]
+very_important_demos = ["blocks_essay_simple", "blocks_flipper", "blocks_form", "blocks_hello","reverse_audio_2", "sepia_filter", "sort_records", "streaming_simple", "tabbed_interface_lite", "tax_calculator", "timer_simple", "video_identity"]
+
+def length(demo):
+    if os.path.exists(os.path.join(DEMOS_DIR, demo, "run.py")):
+        demo_file = os.path.join(DEMOS_DIR, demo, "run.py")
+    else: 
+        return 0
+    with open(demo_file) as run_py:
+        demo_code = run_py.read()
+        demo_code = demo_code.replace("# type: ignore", "").replace('if __name__ == "__main__":\n    ', "")
+    return len(demo_code)
+
+# important_demos = sorted(important_demos, key=length, reverse=True)
+# print(important_demos)
+
+for demo in important_demos:
+    if os.path.exists(os.path.join(DEMOS_DIR, demo, "run.py")):
+        demo_file = os.path.join(DEMOS_DIR, demo, "run.py")
+    else: 
+        continue
+    with open(demo_file) as run_py:
+        demo_code = run_py.read()
+        demo_code = demo_code.replace("# type: ignore", "").replace('if __name__ == "__main__":\n    ', "")
+    FALLBACK_PROMPT += f"Name: {demo.replace('_', ' ')}\n"
+    FALLBACK_PROMPT += "Code: \n\n"
+    FALLBACK_PROMPT += f"{demo_code}\n\n"
+
+for demo in very_important_demos:
+    if os.path.exists(os.path.join(DEMOS_DIR, demo, "run.py")):
+        demo_file = os.path.join(DEMOS_DIR, demo, "run.py")
+    else: 
+        continue
+    with open(demo_file) as run_py:
+        demo_code = run_py.read()
+        demo_code = demo_code.replace("# type: ignore", "").replace('if __name__ == "__main__":\n    ', "")
+    SYSTEM_PROMPT += f"Name: {demo.replace('_', ' ')}\n"
+    SYSTEM_PROMPT += "Code: \n\n"
+    SYSTEM_PROMPT += f"{demo_code}\n\n"
+
+guides_llm_text = [
+    "gradio-6-migration-guide", 
+    "quickstart", 
+    "the-interface-class", 
+    "blocks-and-event-listeners", 
+    "controlling-layout",
+    "more-blocks-features",
+    "custom-CSS-and-JS",
+    "streaming-outputs",
+    "streaming-inputs",
+    "sharing-your-app"
+    ]
+
+GUIDES_LLM_TEXT_CONTENT = ""
+
+for guide_name in guides_llm_text:
+    for guide in guides:
+        if guide["name"] == guide_name:
+            GUIDES_LLM_TEXT_CONTENT += guide["content"] + "\n\n"
+            break
+    
+INTRO = f"""This page contains the documentation for the Gradio library. It is organized into the following sections:
+
+- {guides_llm_text[0].replace('-', ' ').title()}
+- {guides_llm_text[1].replace('-', ' ').title()}
+- {guides_llm_text[2].replace('-', ' ').title()}
+- {guides_llm_text[3].replace('-', ' ').title()}
+- {guides_llm_text[4].replace('-', ' ').title()}
+- {guides_llm_text[5].replace('-', ' ').title()}
+- {guides_llm_text[6].replace('-', ' ').title()}
+- {guides_llm_text[7].replace('-', ' ').title()}
+- {guides_llm_text[8].replace('-', ' ').title()}
+- API Reference: This section contains all the class and function signatures in the Gradio library.
+- End to End Demos: This section contains examples of full end-to-end Gradio apps.
+
+
+"""
+
+FALLBACK_PROMPT = INTRO + GUIDES_LLM_TEXT_CONTENT + "\n\n" + FALLBACK_PROMPT
+
+SYSTEM_PROMPT += "\n\n$INSERT_GUIDES_DOCS_DEMOS"
+
+
+# print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+# print(SYSTEM_PROMPT)
+# print("\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n")
+
+
+
 def generate(json_path):
     with open(json_path, "w+") as f:
         json.dump(docs, f)
+    return  SYSTEM_PROMPT, FALLBACK_PROMPT

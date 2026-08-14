@@ -4,27 +4,33 @@ import asyncio
 import functools
 import hashlib
 import hmac
+import importlib.resources
 import json
+import mimetypes
 import os
+import pickle
 import re
+import secrets
 import shutil
-import sys
-from collections import deque
-from contextlib import AsyncExitStack, asynccontextmanager
+import tempfile
+import threading
+import traceback
+import unicodedata
+import uuid
+from collections import defaultdict, deque
+from collections.abc import AsyncGenerator, Callable
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass as python_dataclass
 from datetime import datetime
 from pathlib import Path
 from tempfile import NamedTemporaryFile, _TemporaryFileWrapper
 from typing import (
     TYPE_CHECKING,
-    AsyncContextManager,
-    AsyncGenerator,
+    Any,
     BinaryIO,
-    Callable,
-    List,
     Optional,
-    Tuple,
     Union,
+    cast,
 )
 from urllib.parse import urlparse
 
@@ -32,23 +38,53 @@ import anyio
 import fastapi
 import gradio_client.utils as client_utils
 import httpx
-import multipart
+import safehttpx
 from gradio_client.documentation import document
-from multipart.multipart import parse_options_header
-from starlette.datastructures import FormData, Headers, MutableHeaders, UploadFile
+from python_multipart.multipart import MultipartParser, parse_options_header
+from starlette.background import BackgroundTask
+from starlette.datastructures import (
+    FormData,
+    Headers,
+    MutableHeaders,
+    State,
+    UploadFile,
+)
+from starlette.exceptions import HTTPException
 from starlette.formparsers import MultiPartException, MultipartPart
-from starlette.responses import PlainTextResponse, Response
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import (
+    FileResponse,
+    PlainTextResponse,
+    Response,
+    StreamingResponse,
+)
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from gradio import processing_utils, utils
-from gradio.data_classes import PredictBody
-from gradio.exceptions import Error
-from gradio.helpers import EventData
+from gradio.data_classes import (
+    BlocksConfigDict,
+    DeveloperPath,
+    MediaStreamChunk,
+    PredictBody,
+    PredictBodyInternal,
+    UserProvidedPath,
+)
+from gradio.exceptions import Error, InvalidPathError
 from gradio.state_holder import SessionState
+from gradio.utils import get_package_version
 
 if TYPE_CHECKING:
-    from gradio.blocks import Blocks
+    from gradio.blocks import BlockFunction, Blocks, BlocksConfig
+    from gradio.helpers import EventData
+    from gradio.oauth import OAuthToken
     from gradio.routes import App
+
+
+config_lock = threading.Lock()
+API_PREFIX = "/gradio_api"
+
+
+mimetypes.init()
 
 
 class Obj:
@@ -105,6 +141,11 @@ class Obj:
     def __repr__(self) -> str:
         return str(self.__dict__)
 
+    def pop(self, item, default=None):
+        if item in self:
+            return self.__dict__.pop(item)
+        return default
+
 
 @document()
 class Request:
@@ -113,15 +154,18 @@ class Request:
     query parameters and other information about the request from within the prediction
     function. The class is a thin wrapper around the fastapi.Request class. Attributes
     of this class include: `headers`, `client`, `query_params`, `session_hash`, and `path_params`. If
-    auth is enabled, the `username` attribute can be used to get the logged in user.
+    auth is enabled, the `username` attribute can be used to get the logged in user. In some environments,
+    the dict-like attributes (e.g. `requests.headers`, `requests.query_params`) of this class are automatically
+    converted to dictionaries, so we recommend converting them to dictionaries before accessing
+    attributes for consistent behavior in different environments.
     Example:
         import gradio as gr
         def echo(text, request: gr.Request):
             if request:
-                print("Request headers dictionary:", request.headers)
-                print("IP address:", request.client.host)
+                print("Request headers dictionary:", dict(request.headers))
                 print("Query parameters:", dict(request.query_params))
-                print("Session hash:", request.session_hash)
+                print("IP address:", request.client.host)
+                print("Gradio session hash:", request.session_hash)
             return text
         io = gr.Interface(echo, "textbox", "textbox").launch()
     Demos: request_ip_headers
@@ -142,10 +186,11 @@ class Request:
             username: The username of the logged in user (if auth is enabled)
             session_hash: The session hash of the current session. It is unique for each page load.
         """
+
         self.request = request
         self.username = username
-        self.session_hash = session_hash
-        self.kwargs: dict = kwargs
+        self.session_hash: str | None = session_hash
+        self.kwargs: dict[str, Any] = kwargs
 
     def dict_to_obj(self, d):
         if isinstance(d, dict):
@@ -153,7 +198,7 @@ class Request:
         else:
             return d
 
-    def __getattr__(self, name):
+    def __getattr__(self, name: str):
         if self.request:
             return self.dict_to_obj(getattr(self.request, name))
         else:
@@ -165,36 +210,109 @@ class Request:
                 ) from ke
             return self.dict_to_obj(obj)
 
+    def __getstate__(self) -> dict[str, Any]:
+        self.kwargs.update(
+            {
+                "headers": dict(getattr(self, "headers", {})),
+                "query_params": dict(getattr(self, "query_params", {})),
+                "cookies": dict(getattr(self, "cookies", {})),
+                "path_params": dict(getattr(self, "path_params", {})),
+                "client": {
+                    "host": getattr(self, "client", {}) and self.client.host,
+                    "port": getattr(self, "client", {}) and self.client.port,
+                },
+                "url": getattr(self, "url", ""),
+            }
+        )
+        state_obj = getattr(self, "state", None)
+        if state_obj is not None:
+            request_state = dict(getattr(state_obj, "_state", {}))
+            if request_state:
+                try:
+                    pickle.dumps(request_state)
+                    self.kwargs["request_state"] = request_state
+                except pickle.PicklingError:
+                    pass
+        self.request = None
+        return self.__dict__
+
+    def __setstate__(self, state: dict[str, Any]):
+        request_state = state.pop("request_state", None)
+        self.__dict__ = state
+        if request_state is not None:
+            self.state = State(request_state)
+
+
+@document()
+class Header(str):
+    """A string that represents a header value in an incoming HTTP request to the Gradio app.
+
+    When you type a function argument of type `Header`, Gradio will automatically extract that header from the request and pass it to the function.
+    Note that it's common for header values to use hyphens, e.g. `x-forwarded-host`, and these will automatically be converted to underscores.
+    So make sure you use underscores in your function arguments.
+
+    Example:
+        import gradio as gr
+
+        def make_api_request_on_behalf_of_user(prompt: str, x_api_token: gr.Header):
+            return "Hello from the API" if not x_api_token else "Hello from the API with token!"
+
+        demo = gr.Interface(
+            make_api_request_on_behalf_of_user,
+            [
+                gr.Textbox(label="Prompt"),
+            ],
+            gr.Textbox(label="Response"),
+        )
+
+        demo.launch(mcp_server=True)
+    """
+
+    pass
+
 
 class FnIndexInferError(Exception):
     pass
 
 
-def infer_fn_index(app: App, api_name: str, body: PredictBody) -> int:
-    if body.fn_index is None:
-        for i, fn in enumerate(app.get_blocks().fns):
-            if fn.api_name == api_name:
-                return i
-
-        raise FnIndexInferError(f"Could not infer fn_index for api_name {api_name}.")
+def get_fn(blocks: Blocks, api_name: str | None, body: PredictBody) -> BlockFunction:
+    if body.session_hash:
+        session_state = blocks.state_holder[body.session_hash]
+        fns = session_state.blocks_config.fns
     else:
-        return body.fn_index
+        fns = blocks.fns
+
+    if body.fn_index is None:
+        if api_name is not None:
+            for fn in fns.values():
+                if fn.api_name == api_name:
+                    return fn
+        raise FnIndexInferError(
+            f"Could not infer function index for API name: {api_name}"
+        )
+    else:
+        return fns[body.fn_index]
 
 
 def compile_gr_request(
-    app: App,
-    body: PredictBody,
-    fn_index_inferred: int,
-    username: Optional[str],
-    request: Optional[fastapi.Request],
+    body: PredictBodyInternal,
+    fn: BlockFunction,
+    username: str | None,
+    request: fastapi.Request | None,
 ):
     # If this fn_index cancels jobs, then the only input we need is the
     # current session hash
-    if app.get_blocks().fns[fn_index_inferred].cancels:
+    if fn.cancels:
         body.data = [body.session_hash]
     if body.request:
         if body.batched:
-            gr_request = [Request(username=username, request=request)]
+            gr_request = [
+                Request(
+                    username=username,
+                    request=body.request,
+                    session_hash=body.session_hash,
+                )
+            ]
         else:
             gr_request = Request(
                 username=username, request=body.request, session_hash=body.session_hash
@@ -209,7 +327,7 @@ def compile_gr_request(
     return gr_request
 
 
-def restore_session_state(app: App, body: PredictBody):
+def restore_session_state(app: App, body: PredictBodyInternal):
     event_id = body.event_id
     session_hash = getattr(body, "session_hash", None)
     if session_hash is not None:
@@ -234,52 +352,74 @@ def restore_session_state(app: App, body: PredictBody):
 
 
 def prepare_event_data(
-    blocks: Blocks,
-    body: PredictBody,
+    blocks_config: BlocksConfig,
+    body: PredictBodyInternal,
 ) -> EventData:
+    from gradio.helpers import EventData
+
     target = body.trigger_id
     event_data = EventData(
-        blocks.blocks.get(target) if target else None,
+        blocks_config.blocks.get(target) if target else None,
         body.event_data,
     )
+    # Set parent to None to avoid pickle issues in ZeroGPU
+    # See https://github.com/gradio-app/gradio/issues/11551
+    if hasattr(event_data.target, "parent"):
+        event_data.target.parent = None  # type: ignore
     return event_data
+
+
+def oauth_token_from_body(body: PredictBodyInternal) -> Optional[OAuthToken]:
+    """Wrap a caller-supplied token so it can be injected as a gr.OAuthToken.
+
+    Scope and expiry are empty because the request carries neither.
+    """
+    from gradio.oauth import OAuthToken as _OAuthToken
+
+    token = getattr(body, "oauth_token", None)
+    if not token or not isinstance(token, str):
+        return None
+    return _OAuthToken(token=token, scope="", expires_at=0)
 
 
 async def call_process_api(
     app: App,
-    body: PredictBody,
+    body: PredictBodyInternal,
     gr_request: Union[Request, list[Request]],
-    fn_index_inferred: int,
+    fn: BlockFunction,
     root_path: str,
 ):
     session_state, iterator = restore_session_state(app=app, body=body)
 
-    dependency = app.get_blocks().fns[fn_index_inferred]
-    event_data = prepare_event_data(app.get_blocks(), body)
+    event_data = prepare_event_data(session_state.blocks_config, body)
     event_id = body.event_id
 
     session_hash = getattr(body, "session_hash", None)
     inputs = body.data
 
-    batch_in_single_out = not body.batched and dependency.batch
+    batch_in_single_out = not body.batched and fn.batch
     if batch_in_single_out:
         inputs = [inputs]
 
     try:
+        from gradio.profiling import trace_phase
+
         with utils.MatplotlibBackendMananger():
-            output = await app.get_blocks().process_api(
-                fn_index=fn_index_inferred,
-                inputs=inputs,
-                request=gr_request,
-                state=session_state,
-                iterator=iterator,
-                session_hash=session_hash,
-                event_id=event_id,
-                event_data=event_data,
-                in_event_listener=True,
-                simple_format=body.simple_format,
-                root_path=root_path,
-            )
+            async with trace_phase("total"):
+                output = await app.get_blocks().process_api(
+                    block_fn=fn,
+                    inputs=inputs,
+                    request=gr_request,
+                    state=session_state,
+                    iterator=iterator,
+                    session_hash=session_hash,
+                    event_id=event_id,
+                    event_data=event_data,
+                    in_event_listener=True,
+                    simple_format=body.simple_format,
+                    root_path=root_path,
+                    oauth_token=oauth_token_from_body(body),
+                )
         iterator = output.pop("iterator", None)
         if event_id is not None:
             app.iterators[event_id] = iterator  # type: ignore
@@ -289,17 +429,84 @@ async def call_process_api(
         iterator = app.iterators.get(event_id) if event_id is not None else None
         if iterator is not None:  # close off any streams that are still open
             run_id = id(iterator)
-            pending_streams: dict[int, list] = (
+            pending_streams: dict[int, MediaStream] = (
                 app.get_blocks().pending_streams[session_hash].get(run_id, {})
             )
             for stream in pending_streams.values():
-                stream.append(None)
+                stream.end_stream()
         raise
 
     if batch_in_single_out:
         output["data"] = output["data"][0]
-
     return output
+
+
+def get_first_header_value(request: fastapi.Request, header_name: str):
+    header_value = request.headers.get(header_name)
+    if header_value:
+        return header_value.split(",")[0].strip()
+    return None
+
+
+def get_request_origin(request: fastapi.Request, route_path: str) -> httpx.URL:
+    """
+    Examines the request headers to determine the origin of the request.
+    If the request includes the x-forwarded-host header, it is used directly to determine the origin.
+    Otherwise, the request url is used and the route path is stripped off.
+
+    The returned URL is a httpx.URL object without a trailing slash, e.g. "https://example.com"
+    """
+
+    x_forwarded_host = get_first_header_value(request, "x-forwarded-host")
+    x_gradio_server = get_first_header_value(request, "x-gradio-server")
+    root_url = (
+        f"http://{x_forwarded_host}"
+        if x_forwarded_host
+        else str(x_gradio_server or request.url)
+    )
+    root_url = httpx.URL(root_url)
+    root_url = root_url.copy_with(query=None)
+    root_url = str(root_url).rstrip("/")
+
+    if get_first_header_value(request, "x-forwarded-proto") == "https":
+        root_url = root_url.replace("http://", "https://")
+
+    route_path = route_path.rstrip("/")
+
+    if len(route_path) > 0 and not x_forwarded_host and root_url.endswith(route_path):
+        root_url = root_url[: -len(route_path)]
+
+    root_url = root_url.rstrip("/")
+    root_url = httpx.URL(root_url)
+
+    return root_url
+
+
+def get_api_call_path(request: fastapi.Request) -> str:
+    """
+    Extracts the API call path from the request URL.
+
+    If the URL (without query parameters) ends with "{API_PREFIX}/queue/join", that exact path is returned.
+    Otherwise, if the URL contains "{API_PREFIX}/call", the substring starting from "{API_PREFIX}/call" is returned.
+    This allows for dynamic API calls to methods other than "predict".
+
+    Raises:
+        ValueError: If the request URL does not match any recognized API call pattern.
+    """
+    queue_api_url = f"{API_PREFIX}/queue/join"
+    generic_api_url = f"{API_PREFIX}/call"
+    request_path = request.url.path.rstrip("/")
+
+    if request_path.endswith(queue_api_url):
+        return queue_api_url
+
+    start_index = request_path.rfind(generic_api_url)
+    if start_index >= 0:
+        return request_path[start_index : len(request_path)]
+
+    raise ValueError(
+        f"Request url '{str(request.url)}' has an unknown api call pattern."
+    )
 
 
 def get_root_url(
@@ -319,29 +526,11 @@ def get_root_url(
     And if there are multiple hosts in the x-forwarded-host or multiple protocols in the x-forwarded-proto, the first one is used.
     """
 
-    def get_first_header_value(header_name: str):
-        header_value = request.headers.get(header_name)
-        if header_value:
-            return header_value.split(",")[0].strip()
-        return None
-
     if root_path and client_utils.is_http_url_like(root_path):
         return root_path.rstrip("/")
 
-    x_forwarded_host = get_first_header_value("x-forwarded-host")
-    root_url = f"http://{x_forwarded_host}" if x_forwarded_host else str(request.url)
-    root_url = httpx.URL(root_url)
-    root_url = root_url.copy_with(query=None)
-    root_url = str(root_url).rstrip("/")
-    if get_first_header_value("x-forwarded-proto") == "https":
-        root_url = root_url.replace("http://", "https://")
+    root_url = get_request_origin(request, route_path)
 
-    route_path = route_path.rstrip("/")
-    if len(route_path) > 0 and not x_forwarded_host:
-        root_url = root_url[: -len(route_path)]
-    root_url = root_url.rstrip("/")
-
-    root_url = httpx.URL(root_url)
     if root_path and root_url.path != root_path:
         root_url = root_url.copy_with(path=root_path)
 
@@ -367,7 +556,8 @@ class GradioUploadFile(UploadFile):
         headers: Headers | None = None,
     ) -> None:
         super().__init__(file, size=size, filename=filename, headers=headers)
-        self.sha = hashlib.sha1()
+        self.sha = hashlib.sha256()
+        self.sha.update(processing_utils.hash_seed)
 
 
 @python_dataclass(frozen=True)
@@ -393,10 +583,15 @@ class FileUploadProgressNotQueuedError(Exception):
 class FileUploadProgress:
     def __init__(self) -> None:
         self._statuses: dict[str, FileUploadProgressTracker] = {}
+        self._signals = defaultdict(asyncio.Event)
 
     def track(self, upload_id: str):
         if upload_id not in self._statuses:
             self._statuses[upload_id] = FileUploadProgressTracker(deque(), False)
+            self._signals[upload_id].set()
+
+    async def is_tracked(self, upload_id: str) -> bool:
+        return await self._signals[upload_id].wait()
 
     def append(self, upload_id: str, filename: str, message_bytes: bytes):
         if upload_id not in self._statuses:
@@ -452,7 +647,7 @@ class GradioMultiPartParser:
 
     """
 
-    max_file_size = 1024 * 1024
+    max_header_size = 1024 * 8
 
     def __init__(
         self,
@@ -464,27 +659,31 @@ class GradioMultiPartParser:
         upload_id: str | None = None,
         upload_progress: FileUploadProgress | None = None,
         max_file_size: int | float,
+        max_header_size: int = max_header_size,
     ) -> None:
         self.headers = headers
         self.stream = stream
         self.max_files = max_files
         self.max_fields = max_fields
-        self.items: List[Tuple[str, Union[str, UploadFile]]] = []
+        self.items: list[tuple[str, Union[str, UploadFile]]] = []
         self.upload_id = upload_id
         self.upload_progress = upload_progress
         self._current_files = 0
         self._current_fields = 0
         self.max_file_size = max_file_size
+        self.max_header_size = max_header_size
         self._current_partial_header_name: bytes = b""
         self._current_partial_header_value: bytes = b""
+        self._current_header_size: int = 0
         self._current_part = MultipartPart()
         self._charset = ""
-        self._file_parts_to_write: List[Tuple[MultipartPart, bytes]] = []
-        self._file_parts_to_finish: List[MultipartPart] = []
-        self._files_to_close_on_error: List[_TemporaryFileWrapper] = []
+        self._file_parts_to_write: list[tuple[MultipartPart, bytes]] = []
+        self._file_parts_to_finish: list[MultipartPart] = []
+        self._files_to_close_on_error: list[_TemporaryFileWrapper] = []
 
     def on_part_begin(self) -> None:
         self._current_part = MultipartPart()
+        self._current_header_size = 0
 
     def on_part_data(self, data: bytes, start: int, end: int) -> None:
         message_bytes = data[start:end]
@@ -501,10 +700,12 @@ class GradioMultiPartParser:
 
     def on_part_end(self) -> None:
         if self._current_part.file is None:
+            data = self._current_part.data
+            data_bytes = bytes(data) if isinstance(data, bytearray) else data
             self.items.append(
                 (
                     self._current_part.field_name,
-                    _user_safe_decode(self._current_part.data, self._charset),
+                    _user_safe_decode(data_bytes, str(self._charset)),
                 )
             )
         else:
@@ -514,11 +715,23 @@ class GradioMultiPartParser:
             # self.items is used in the return value.
             self.items.append((self._current_part.field_name, self._current_part.file))
 
+    def _check_header_size(self, additional_bytes: int):
+        if self._current_header_size + additional_bytes > self.max_header_size:
+            raise MultiPartException(
+                f"Headers exceeded maximum allowed size of {self.max_header_size} bytes."
+            )
+
     def on_header_field(self, data: bytes, start: int, end: int) -> None:
+        additional_header_bytes = end - start
+        self._check_header_size(additional_header_bytes)
         self._current_partial_header_name += data[start:end]
+        self._current_header_size += additional_header_bytes
 
     def on_header_value(self, data: bytes, start: int, end: int) -> None:
+        additional_header_bytes = end - start
+        self._check_header_size(additional_header_bytes)
         self._current_partial_header_value += data[start:end]
+        self._current_header_size += additional_header_bytes
 
     def on_header_end(self) -> None:
         field = self._current_partial_header_name.lower()
@@ -538,7 +751,7 @@ class GradioMultiPartParser:
             )
         except KeyError as e:
             raise MultiPartException(
-                'The Content-Disposition header field "name" must be ' "provided."
+                'The Content-Disposition header field "name" must be provided.'
             ) from e
         if b"filename" in options:
             self._current_files += 1
@@ -579,7 +792,7 @@ class GradioMultiPartParser:
             raise MultiPartException("Missing boundary in multipart.") from e
 
         # Callbacks dictionary.
-        callbacks: multipart.multipart.MultipartCallbacks = {
+        callbacks = {
             "on_part_begin": self.on_part_begin,
             "on_part_data": self.on_part_data,
             "on_part_end": self.on_part_end,
@@ -591,7 +804,7 @@ class GradioMultiPartParser:
         }
 
         # Create the parser.
-        parser = multipart.MultipartParser(boundary, callbacks)
+        parser = MultipartParser(boundary, callbacks)  # type: ignore
         try:
             # Feed the parser with data from the request.
             async for chunk in self.stream:
@@ -603,14 +816,14 @@ class GradioMultiPartParser:
                 # the main thread.
                 for part, data in self._file_parts_to_write:
                     assert part.file  # for type checkers  # noqa: S101
-                    await part.file.write(data)
-                    part.file.sha.update(data)  # type: ignore
-                    if os.stat(part.file.file.name).st_size > self.max_file_size:
+                    if (part.file.size or 0) + len(data) > self.max_file_size:
                         if self.upload_progress is not None:
                             self.upload_progress.set_done(self.upload_id)  # type: ignore
                         raise MultiPartException(
                             f"File size exceeded maximum allowed size of {self.max_file_size} bytes."
                         )
+                    await part.file.write(data)
+                    part.file.sha.update(data)  # type: ignore
                 for part in self._file_parts_to_finish:
                     assert part.file  # for type checkers  # noqa: S101
                     await part.file.seek(0)
@@ -630,11 +843,11 @@ class GradioMultiPartParser:
 
 
 def move_uploaded_files_to_cache(files: list[str], destinations: list[str]) -> None:
-    for file, dest in zip(files, destinations):
+    for file, dest in zip(files, destinations, strict=False):
         shutil.move(file, dest)
 
 
-def update_root_in_config(config: dict, root: str) -> dict:
+def update_root_in_config(config: BlocksConfigDict, root: str) -> BlocksConfigDict:
     """
     Updates the root "key" in the config dictionary to the new root url. If the
     root url has changed, all of the urls in the config that correspond to component
@@ -643,8 +856,33 @@ def update_root_in_config(config: dict, root: str) -> dict:
     previous_root = config.get("root")
     if previous_root is None or previous_root != root:
         config["root"] = root
-        config = processing_utils.add_root_url(config, root, previous_root)
+        config = processing_utils.add_root_url(config, root, previous_root)  # type: ignore
     return config
+
+
+def update_example_values_to_use_public_url(api_info: dict[str, Any]) -> dict[str, Any]:
+    """
+    Updates the example values in the api_info dictionary to use a public url
+    """
+
+    def _add_root_url(file_dict: dict):
+        default_value = file_dict.get("parameter_default")
+        if default_value is not None and client_utils.is_file_obj_with_url(
+            default_value
+        ):
+            if client_utils.is_http_url_like(default_value["url"]):
+                return file_dict
+            # If the default value's url is not already a full public url,
+            # we use the example_input url. This makes it so that the example
+            # value for images, audio, and video components pass SSRF checks.
+            default_value["url"] = file_dict["example_input"]["url"]
+        return file_dict
+
+    return client_utils.traverse(
+        api_info,
+        _add_root_url,
+        lambda d: isinstance(d, dict) and "parameter_default" in d,
+    )
 
 
 def compare_passwords_securely(input_password: str, correct_password: str) -> bool:
@@ -684,21 +922,42 @@ class CustomCORSMiddleware:
     def __init__(
         self,
         app: ASGIApp,
+        strict_cors: bool = True,
+        parent_app: Any | None = None,
     ) -> None:
         self.app = app
+        self.parent_app = parent_app
+        self._parent_configures_cors: bool | None = None
         self.all_methods = ("DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT")
         self.preflight_headers = {
             "Access-Control-Allow-Methods": ", ".join(self.all_methods),
             "Access-Control-Max-Age": str(600),
+            "Access-Control-Allow-Credentials": "true",
         }
         self.simple_headers = {"Access-Control-Allow-Credentials": "true"}
         # Any of these hosts suggests that the Gradio app is running locally.
-        # Note: "null" is a special case that happens if a Gradio app is running
-        # as an embedded web component in a local static webpage.
-        self.localhost_aliases = ["localhost", "127.0.0.1", "0.0.0.0", "null"]
+        self.localhost_aliases = ["localhost", "127.0.0.1", "0.0.0.0"]
+        if not strict_cors or os.getenv("GRADIO_LOCAL_DEV_MODE") is not None:  # type: ignore
+            # Note: "null" is a special case that happens if a Gradio app is running
+            # as an embedded web component in a local static webpage. However, it can
+            # also be used maliciously for CSRF attacks, so it is not allowed by default.
+            self.localhost_aliases.append("null")
+
+    def parent_configures_cors(self) -> bool:
+        if self._parent_configures_cors is None:
+            from starlette.middleware.cors import CORSMiddleware
+
+            self._parent_configures_cors = any(
+                middleware.cls is CORSMiddleware
+                for middleware in getattr(self.parent_app, "user_middleware", [])
+            )
+        return self._parent_configures_cors
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        if self.parent_configures_cors():
             await self.app(scope, receive, send)
             return
         headers = Headers(scope=scope)
@@ -737,9 +996,8 @@ class CustomCORSMiddleware:
         message.setdefault("headers", [])
         headers = MutableHeaders(scope=message)
         headers.update(self.simple_headers)
-        has_cookie = "cookie" in request_headers
         origin = request_headers["Origin"]
-        if has_cookie or self.is_valid_origin(request_headers):
+        if self.is_valid_origin(request_headers):
             self.allow_explicit_origin(headers, origin)
         await send(message)
 
@@ -748,6 +1006,7 @@ class CustomCORSMiddleware:
         host = request_headers["Host"]
         host_name = get_hostname(host)
         origin_name = get_hostname(origin)
+
         return (
             host_name not in self.localhost_aliases
             or origin_name in self.localhost_aliases
@@ -762,6 +1021,7 @@ class CustomCORSMiddleware:
 def delete_files_created_by_app(blocks: Blocks, age: int | None) -> None:
     """Delete files that are older than age. If age is None, delete all files."""
     dont_delete = set()
+
     for component in blocks.blocks.values():
         dont_delete.update(getattr(component, "keep_in_cache", set()))
     for temp_set in blocks.temp_file_sets:
@@ -774,7 +1034,10 @@ def delete_files_created_by_app(blocks: Blocks, age: int | None) -> None:
             try:
                 file_path = Path(file)
                 modified_time = datetime.fromtimestamp(file_path.lstat().st_ctime)
-                if age is None or (datetime.now() - modified_time).seconds > age:
+                if (
+                    age is None
+                    or (datetime.now() - modified_time).total_seconds() > age
+                ):
                     os.remove(file)
                     to_remove.add(file)
             except FileNotFoundError:
@@ -791,14 +1054,35 @@ async def delete_files_on_schedule(app: App, frequency: int, age: int) -> None:
         )
 
 
+async def _cancel_background_task(task: asyncio.Task) -> None:
+    """Cancel a lifespan background task and wait for it to unwind."""
+    task.cancel()
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception:
+        # These tasks were previously fire-and-forget, so a failure inside one
+        # only ever got logged. Awaiting it must not turn that into an error
+        # that aborts the rest of the shutdown sequence.
+        traceback.print_exc()
+
+
 @asynccontextmanager
 async def _lifespan_handler(
     app: App, frequency: int = 1, age: int = 1
 ) -> AsyncGenerator:
     """A context manager that triggers the startup and shutdown events of the app."""
-    asyncio.create_task(delete_files_on_schedule(app, frequency, age))
-    yield
-    delete_files_created_by_app(app.get_blocks(), age=None)
+    # Keep the handle so the task can be cancelled below. It never finishes on
+    # its own, and its pending `sleep` keeps it reachable from the event loop,
+    # so not cancelling it leaves one `while True` task (and the `App` it closes
+    # over) alive for the lifetime of the process on every launch.
+    task = asyncio.create_task(delete_files_on_schedule(app, frequency, age))
+    try:
+        yield
+    finally:
+        await _cancel_background_task(task)
+        delete_files_created_by_app(app.get_blocks(), age=None)
 
 
 async def _delete_state(app: App):
@@ -811,30 +1095,427 @@ async def _delete_state(app: App):
 @asynccontextmanager
 async def _delete_state_handler(app: App):
     """When the server launches, regularly delete expired state."""
-    # The stop event needs to get the current event loop for python 3.8
-    # but the loop parameter is deprecated for 3.8+
-    if sys.version_info < (3, 10):
-        loop = asyncio.get_running_loop()
-        app.stop_event = asyncio.Event(loop=loop)
-    asyncio.create_task(_delete_state(app))
-    yield
+    task = asyncio.create_task(_delete_state(app))
+    try:
+        yield
+    finally:
+        await _cancel_background_task(task)
 
 
 def create_lifespan_handler(
-    user_lifespan: Callable[[App], AsyncContextManager] | None,
+    user_lifespan: Callable[[App], AbstractAsyncContextManager] | None,
     frequency: int | None = 1,
     age: int | None = 1,
-) -> Callable[[App], AsyncContextManager]:
+) -> Callable[[App], AbstractAsyncContextManager]:
     """Return a context manager that applies _lifespan_handler and user_lifespan if it exists."""
 
     @asynccontextmanager
     async def _handler(app: App):
+        state = None
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(_delete_state_handler(app))
             if frequency and age:
                 await stack.enter_async_context(_lifespan_handler(app, frequency, age))
             if user_lifespan is not None:
-                await stack.enter_async_context(user_lifespan(app))
-            yield
+                state = await stack.enter_async_context(user_lifespan(app))
+            yield state
 
     return _handler
+
+
+class MediaStream:
+    def __init__(self, desired_output_format: str | None = None):
+        self.segments: list[MediaStreamChunk] = []
+        self.combined_file: str | None = None
+        self.ended = False
+        self.segment_index = 0
+        self.playlist = "#EXTM3U\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXT-X-TARGETDURATION:10\n#EXT-X-VERSION:4\n#EXT-X-MEDIA-SEQUENCE:0\n"
+        self.max_duration = 5
+        self.desired_output_format = desired_output_format
+
+    async def add_segment(self, data: MediaStreamChunk | None):
+        if not data:
+            return
+
+        segment_id = str(uuid.uuid4())
+        self.segments.append({"id": segment_id, **data})  # type: ignore
+        self.max_duration = max(self.max_duration, data["duration"]) + 1
+
+    def end_stream(self):
+        self.ended = True
+
+
+def create_url_safe_hash(data: bytes, digest_size=8):
+    """Create a URL-safe short hash of the data. Used to generate unique short deep links."""
+    import base64
+
+    hash_obj = hashlib.blake2b(data, digest_size=digest_size, usedforsecurity=False)
+    url_safe_hash = base64.urlsafe_b64encode(hash_obj.digest()).decode().rstrip("=")
+
+    return url_safe_hash
+
+
+def slugify(value):
+    """
+    Convert to ASCII. Convert spaces or repeated dashes to single dashes.
+    Remove characters that aren't alphanumerics, underscores, or hyphens.
+    Convert to lowercase. Also strip leading and trailing whitespace,
+    dashes, and underscores.
+    """
+    value = str(value)
+    value = (
+        unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    )
+    value = re.sub(r"[^\w\s-]", "", value.lower())
+    return re.sub(r"[-\s]+", "-", value).strip("-_")
+
+
+# Prefixes that identify "dumb" routes safe to proxy to static workers.
+# These routes serve files, static assets, or handle uploads — no queue/state needed.
+STATIC_ROUTE_PREFIXES = (
+    "/svelte/",
+    "/static/",
+    "/assets/",
+    "/favicon.ico",
+    "/file=",
+    "/file/",
+    "/upload",
+    "/custom_component/",
+)
+
+
+def routes_safe_join(directory: DeveloperPath, path: UserProvidedPath) -> str:
+    """Safely join the user path to the directory while performing some additional http-related checks,
+    e.g. ensuring that the full path exists on the local file system and is not a directory
+    """
+    if path == "":
+        raise fastapi.HTTPException(400)
+    if starts_with_protocol(path):
+        raise fastapi.HTTPException(403)
+    try:
+        fullpath = Path(utils.safe_join(directory, path))
+    except InvalidPathError as e:
+        raise fastapi.HTTPException(403) from e
+    if fullpath.is_dir():
+        raise fastapi.HTTPException(403)
+    if not fullpath.exists():
+        raise fastapi.HTTPException(404)
+    return str(fullpath)
+
+
+STATIC_TEMPLATE_LIB = cast(
+    DeveloperPath,
+    importlib.resources.files("gradio").joinpath("templates").as_posix(),  # type: ignore
+)
+STATIC_PATH_LIB = cast(
+    DeveloperPath,
+    importlib.resources.files("gradio")
+    .joinpath("templates/frontend/static")
+    .as_posix(),  # type: ignore
+)
+BUILD_PATH_LIB = cast(
+    DeveloperPath,
+    importlib.resources.files("gradio")
+    .joinpath("templates/frontend/assets")
+    .as_posix(),  # type: ignore
+)
+VERSION = get_package_version()
+XSS_SAFE_MIMETYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "audio/aac",
+    "audio/aiff",
+    "audio/flac",
+    "audio/mp4",
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "audio/webm",
+    "audio/x-aiff",
+    "audio/x-flac",
+    "audio/x-m4a",
+    "audio/x-matroska",
+    "audio/x-wav",
+    "video/mp4",
+    "video/mpeg",
+    "video/ogg",
+    "video/quicktime",
+    "video/webm",
+    "video/x-matroska",
+    "video/x-msvideo",
+    "text/plain",
+    "application/json",
+}
+
+MEDIA_MIMETYPE_OVERRIDES = {
+    ".aac": "audio/aac",
+    ".aif": "audio/aiff",
+    ".aifc": "audio/aiff",
+    ".aiff": "audio/aiff",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".m4b": "audio/mp4",
+    ".mka": "audio/x-matroska",
+    ".wav": "audio/wav",
+    ".weba": "audio/webm",
+    ".avi": "video/x-msvideo",
+    ".m4v": "video/mp4",
+    ".mkv": "video/x-matroska",
+    ".mov": "video/quicktime",
+}
+
+
+def register_media_mimetypes() -> None:
+    """Teach `mimetypes` the media types in `MEDIA_MIMETYPE_OVERRIDES`.
+
+    Must be called after `mimetypes.init()`, which rebuilds the database from
+    scratch and would otherwise discard these entries.
+    """
+    for extension, mime_type in MEDIA_MIMETYPE_OVERRIDES.items():
+        mimetypes.add_type(mime_type, extension)
+
+
+DEFAULT_TEMP_DIR = os.environ.get("GRADIO_TEMP_DIR") or str(
+    Path(tempfile.gettempdir()) / "gradio"
+)
+
+
+def file_response(developer_path: DeveloperPath, user_path: UserProvidedPath):
+    return FileResponse(routes_safe_join(developer_path, user_path))
+
+
+def favicon(favicon_path: str | Path | None = None):
+    if favicon_path is None:
+        return file_response(STATIC_PATH_LIB, UserProvidedPath("img/logo.svg"))
+    else:
+        return FileResponse(favicon_path)
+
+
+_FILE_STREAM_MAX_REDIRECTS = 20
+_FILE_STREAM_PASSTHROUGH_HEADERS = (
+    "content-length",
+    "content-range",
+    "accept-ranges",
+    "last-modified",
+    "etag",
+)
+
+
+async def secure_url_stream_response(url: str, request: StarletteRequest):
+    """
+    SSRF-safe way to serve an http(s) URL from the `/gradio_api/file=<url>`
+    endpoint. Instead of redirecting the caller to `url` (an open redirect, and
+    a client-side SSRF vector because `gradio_client` follows redirects), the
+    server fetches `url` itself through `safehttpx` — which resolves the host,
+    confirms it maps to a public IP, and pins that IP for the connection so a DNS
+    rebind cannot swap in an internal address — and streams the bytes back,
+    re-validating every redirect hop. Hosts that are unresolvable or resolve to a
+    private / loopback / link-local / reserved address are rejected. See #13593.
+    """
+    forward_headers = {}
+    range_header = request.headers.get("Range")
+    if range_header:
+        forward_headers["Range"] = range_header
+
+    current_url = url
+    redirects = 0
+    while True:
+        try:
+            parsed = httpx.URL(current_url)
+        except Exception as e:
+            raise HTTPException(403, f"File not allowed: {url}.") from e
+        if parsed.scheme not in ("http", "https") or not parsed.host:
+            raise HTTPException(403, f"File not allowed: {url}.")
+        try:
+            verified_ip = await safehttpx.async_validate_url(parsed.host)
+        except Exception as e:
+            raise HTTPException(403, f"File not allowed: {url}.") from e
+
+        transport = safehttpx.AsyncSecureTransport(verified_ip)
+        client = httpx.AsyncClient(
+            transport=transport, timeout=httpx.Timeout(None, connect=10.0)
+        )
+        try:
+            req = client.build_request(
+                request.method, current_url, headers=forward_headers
+            )
+            upstream = await client.send(req, stream=True)
+        except Exception as e:
+            await client.aclose()
+            raise HTTPException(502, f"Could not fetch file: {url}.") from e
+
+        if upstream.has_redirect_location:
+            location = upstream.headers.get("location", "")
+            await upstream.aclose()
+            await client.aclose()
+            redirects += 1
+            if redirects > _FILE_STREAM_MAX_REDIRECTS or not location:
+                raise HTTPException(502, f"Could not fetch file: {url}.")
+            current_url = str(httpx.URL(current_url).join(location))
+            continue
+
+        upstream_mime = upstream.headers.get("content-type", "").split(";")[0].strip()
+        guessed_mime, _ = mimetypes.guess_type(current_url)
+        if upstream_mime in XSS_SAFE_MIMETYPES or guessed_mime in XSS_SAFE_MIMETYPES:
+            content_type = upstream_mime or guessed_mime or "application/octet-stream"
+            content_disposition = "inline"
+        else:
+            content_type = "application/octet-stream"
+            content_disposition = "attachment"
+
+        response_headers = {
+            "Content-Type": content_type,
+            "Content-Disposition": content_disposition,
+            "X-Content-Type-Options": "nosniff",
+        }
+        for header in _FILE_STREAM_PASSTHROUGH_HEADERS:
+            if header in upstream.headers:
+                response_headers[header] = upstream.headers[header]
+
+        async def _close(upstream=upstream, client=client) -> None:
+            await upstream.aclose()
+            await client.aclose()
+
+        return StreamingResponse(
+            upstream.aiter_raw(),
+            status_code=upstream.status_code,
+            headers=response_headers,
+            background=BackgroundTask(_close),
+        )
+
+
+def file_fetch(
+    path_or_url,
+    request,
+    blocks_or_config,
+    upload_dir,
+):
+    # NOTE: http(s) URLs are intentionally NOT handled here. Previously this
+    # returned a 302 redirect to the URL, which was an open redirect and — since
+    # `gradio_client` follows redirects — a client-side SSRF vector (#13593).
+    # They are now served by `secure_url_stream_response()` from the async route,
+    # which fetches through `safehttpx` (public-IP validated, IP-pinned) and
+    # streams the bytes back. Any http(s) URL reaching this sync path falls
+    # through to the `starts_with_protocol` guard below and is rejected.
+    if starts_with_protocol(path_or_url):
+        raise HTTPException(403, f"File not allowed: {path_or_url}.")
+
+    abs_path = utils.abspath(path_or_url)
+    try:
+        if abs_path.is_dir() or not abs_path.exists():
+            raise HTTPException(403, f"File not allowed: {path_or_url}.")
+    except Exception as e:
+        raise HTTPException(403, f"File not allowed: {path_or_url}.") from e
+
+    from gradio.data_classes import _StaticFiles
+
+    allowed, reason = utils.is_allowed_file(
+        abs_path,
+        blocked_paths=blocks_or_config.blocked_paths,
+        allowed_paths=blocks_or_config.allowed_paths + _StaticFiles.all_paths,
+        created_paths=[upload_dir, str(utils.get_cache_folder())],
+    )
+    if not allowed:
+        raise HTTPException(403, f"File not allowed: {path_or_url}.")
+
+    mime_type, _ = mimetypes.guess_type(abs_path)
+    if mime_type in XSS_SAFE_MIMETYPES or reason == "allowed":
+        media_type = mime_type or "application/octet-stream"
+        content_disposition_type = "inline"
+    else:
+        media_type = "application/octet-stream"
+        content_disposition_type = "attachment"
+
+    range_val = request.headers.get("Range", "").strip()
+    if range_val.startswith("bytes=") and "-" in range_val:
+        range_val = range_val[6:]
+        start, end = range_val.split("-")
+        if start.isnumeric() and end.isnumeric():
+            from gradio import ranged_response  # type: ignore
+
+            start = int(start)
+            end = int(end)
+            headers = dict(request.headers)
+            headers["Content-Disposition"] = content_disposition_type
+            headers["Content-Type"] = media_type
+            return ranged_response.RangedFileResponse(
+                abs_path,
+                ranged_response.OpenRange(start, end),
+                headers,
+                stat_result=os.stat(abs_path),
+            )
+
+    return FileResponse(
+        abs_path,
+        headers={"Accept-Ranges": "bytes"},
+        content_disposition_type=content_disposition_type,
+        media_type=media_type,
+        filename=abs_path.name,
+    )
+
+
+async def upload_fn(
+    request: StarletteRequest,
+    upload_dir,
+    max_file_size,
+    upload_id,
+    force_move: bool = True,
+    upload_progress: FileUploadProgress | None = None,
+):
+    content_type_header = request.headers.get("Content-Type")
+    content_type: bytes
+    content_type, _ = parse_options_header(content_type_header or "")
+    if content_type != b"multipart/form-data":
+        raise HTTPException(status_code=400, detail="Invalid content type.")
+
+    if upload_id and upload_progress:
+        upload_progress.track(upload_id)
+
+    multipart_parser = GradioMultiPartParser(
+        request.headers,
+        request.stream(),
+        max_files=1000,
+        max_fields=1000,
+        max_file_size=max_file_size,
+        upload_id=upload_id,
+        upload_progress=upload_progress,
+    )
+    form = await multipart_parser.parse()
+
+    output_files = []
+    files_to_copy = []
+    locations = []
+    for temp_file in form.getlist("files"):
+        if not isinstance(temp_file, GradioUploadFile):
+            raise TypeError("File is not an instance of GradioUploadFile")
+        if temp_file.filename:
+            file_name = Path(temp_file.filename).name
+            name = client_utils.strip_invalid_filename_characters(file_name)
+        else:
+            name = f"tmp{secrets.token_hex(5)}"
+        directory = Path(upload_dir) / temp_file.sha.hexdigest()
+        directory.mkdir(exist_ok=True, parents=True)
+        try:
+            dest = utils.safe_join(
+                DeveloperPath(str(directory)), UserProvidedPath(name)
+            )
+        except InvalidPathError as err:
+            raise HTTPException(
+                status_code=400, detail=f"Invalid file name: {name}"
+            ) from err
+        temp_file.file.close()
+        try:
+            os.rename(temp_file.file.name, dest)
+        except OSError:
+            if force_move:
+                import shutil
+
+                shutil.move(temp_file.file.name, dest)
+            else:
+                files_to_copy.append(temp_file.file.name)
+                locations.append(dest)
+        output_files.append(dest)
+
+    return output_files, files_to_copy, locations

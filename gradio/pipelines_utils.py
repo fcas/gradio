@@ -3,7 +3,7 @@ Defines internal helper methods for handling transformers and diffusers pipeline
 These are used by load_from_pipeline method in pipelines.py.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -11,7 +11,7 @@ from PIL import Image
 from gradio import components
 
 
-def handle_transformers_pipeline(pipeline: Any) -> Optional[Dict[str, Any]]:
+def handle_transformers_pipeline(pipeline: Any) -> dict[str, Any] | None:
     try:
         import transformers
     except ImportError as ie:
@@ -88,6 +88,16 @@ def handle_transformers_pipeline(pipeline: Any) -> Optional[Dict[str, Any]]:
             "outputs": components.Label(label="Classification", render=False),
             "preprocess": lambda x: [x],
             "postprocess": lambda r: {i["label"]: i["score"] for i in r},
+        }
+    if is_transformers_pipeline_type(pipeline, "TokenClassificationPipeline"):
+        return {
+            "inputs": components.Textbox(label="Input", render=False),
+            "outputs": components.HighlightedText(label="Entities", render=False),
+            "preprocess": lambda x: [x],
+            "postprocess": lambda r, text: {
+                "text": text,
+                "entities": r,
+            },
         }
     if is_transformers_pipeline_type(pipeline, "TextGenerationPipeline"):
         return {
@@ -186,9 +196,9 @@ def handle_transformers_pipeline(pipeline: Any) -> Optional[Dict[str, Any]]:
     raise ValueError(f"Unsupported transformers pipeline type: {type(pipeline)}")
 
 
-def handle_diffusers_pipeline(pipeline: Any) -> Optional[Dict[str, Any]]:
+def handle_diffusers_pipeline(pipeline: Any) -> dict[str, Any] | None:
     try:
-        import diffusers
+        import diffusers  # ty: ignore[unresolved-import]
     except ImportError as ie:
         raise ImportError(
             "diffusers not installed. Please try `pip install diffusers`"
@@ -478,7 +488,7 @@ def handle_diffusers_pipeline(pipeline: Any) -> Optional[Dict[str, Any]]:
     raise ValueError(f"Unsupported diffusers pipeline type: {type(pipeline)}")
 
 
-def handle_transformers_js_pipeline(pipeline: Any) -> Dict[str, Any]:
+def handle_transformers_js_pipeline(pipeline: Any) -> dict[str, Any]:
     try:
         from transformers_js_py import as_url, read_audio  # type: ignore
     except ImportError as ie:
@@ -595,7 +605,9 @@ def handle_transformers_js_pipeline(pipeline: Any) -> Dict[str, Any]:
                 text,
                 [c.strip() for c in classnames.split(",")],
             ),
-            "postprocess": lambda result: dict(zip(result["labels"], result["scores"])),
+            "postprocess": lambda result: dict(
+                zip(result["labels"], result["scores"], strict=False)
+            ),
         }
     if pipeline.task == "feature-extraction":
         return {

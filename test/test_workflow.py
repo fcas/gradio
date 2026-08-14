@@ -1,0 +1,742 @@
+import json
+import os
+import tempfile
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+import gradio as gr
+import gradio.workflow as workflow_module
+from gradio.oauth import OAuthToken
+from gradio.route_utils import Request
+from gradio.utils import get_upload_folder, is_in_or_equal
+from gradio.workflow import (
+    WRITE_TOKEN,
+    Workflow,
+    _chat_image_url,
+    _dispatch_model_endpoint,
+    _get_locally_saved_hf_token,
+    _request_has_write_token,
+    _resolve_token,
+    _save_tmp,
+    _workflow_from_bind,
+    call_model,
+    call_space,
+    get_model_endpoints,
+    get_oauth_available,
+    get_token,
+    has_write_access,
+)
+
+
+def _make_oauth(token: str) -> OAuthToken:
+    obj = OAuthToken.__new__(OAuthToken)
+    obj.token = token
+    obj.scope = "openid"
+    obj.expires_at = 0
+    return obj
+
+
+def _make_request(
+    cookie: str | None = None,
+    header: str | None = None,
+    query: str | None = None,
+) -> Request:
+    headers = {}
+    if cookie is not None:
+        headers["cookie"] = cookie
+    if header is not None:
+        headers["x-gradio-workflow-write-token"] = header
+    return Request(
+        headers=headers,
+        query_params={"write_token": query} if query is not None else {},
+    )
+
+
+def _write_request() -> Request:
+    """A request that carries the process write token (cookie flavor)."""
+    return _make_request(cookie=f"gradio_workflow_write_token_7860={WRITE_TOKEN}")
+
+
+def _shout(text: str) -> str:
+    return text.upper()
+
+
+def _add(a: int, b: int) -> int:
+    return a + b
+
+
+def _flag(on: bool) -> str:
+    return "yes" if on else "no"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Construction
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestConstruction:
+    def test_subclasses_blocks(self):
+        wf = Workflow(graph=os.path.join(tempfile.gettempdir(), "wf_test.json"))
+        assert isinstance(wf, gr.Blocks)
+
+    def test_default_graph_path_is_caller_dir(self):
+        wf = Workflow()
+        assert os.path.basename(wf._workflow_file) == "workflow.json"
+        # Caller of __init__ is this test file → graph should resolve next to it.
+        assert os.path.dirname(wf._workflow_file) == os.path.dirname(
+            os.path.abspath(__file__)
+        )
+
+    def test_graph_parameter_honored(self, tmp_path):
+        graph = tmp_path / "custom.json"
+        wf = Workflow(graph=str(graph))
+        assert wf._workflow_file == str(graph)
+
+    def test_bind_accepts_list(self, tmp_path):
+        wf = Workflow(graph=str(tmp_path / "wf.json"), bind=[_shout, _add])
+        assert set(wf._bound.keys()) == {"_shout", "_add"}
+
+    def test_bind_accepts_dict(self, tmp_path):
+        wf = Workflow(
+            graph=str(tmp_path / "wf.json"),
+            bind={"upper": _shout, "sum": _add},
+        )
+        assert set(wf._bound.keys()) == {"upper", "sum"}
+
+    def test_workflow_name_derived_from_filename(self, tmp_path):
+        wf = Workflow(graph=str(tmp_path / "marketing_image_creator.json"))
+        assert wf._workflow_name == "Marketing Image Creator"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# OAuth gating
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestOAuthGating:
+    def test_no_login_button_off_space(self, tmp_path, monkeypatch):
+        # Local dev: no Space, no LoginButton, no oauth wiring.
+        monkeypatch.delenv("SYSTEM", raising=False)
+        monkeypatch.delenv("SPACE_ID", raising=False)
+        wf = Workflow(graph=str(tmp_path / "wf.json"))
+        assert wf.expects_oauth is False
+
+    def test_no_login_button_on_space_without_oauth_env(self, tmp_path, monkeypatch):
+        # The wftest 500 case: on a Space but `hf_oauth: true` either isn't
+        # set or env vars haven't propagated. Construction must NOT raise.
+        monkeypatch.setenv("SYSTEM", "spaces")
+        monkeypatch.setenv("SPACE_ID", "u/r")
+        monkeypatch.delenv("OAUTH_CLIENT_ID", raising=False)
+        wf = Workflow(graph=str(tmp_path / "wf.json"))
+        assert wf.expects_oauth is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# launch() — allowed_paths merging
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestLaunchAllowedPaths:
+    def test_tempdir_added_by_default(self, tmp_path, monkeypatch):
+        wf = Workflow(graph=str(tmp_path / "wf.json"))
+        captured = {}
+
+        def fake_super_launch(*args, **kwargs):
+            captured["allowed_paths"] = kwargs.get("allowed_paths")
+            return (None, "http://127.0.0.1:7860/", None)
+
+        monkeypatch.setattr(gr.Blocks, "launch", fake_super_launch)
+        wf.launch(prevent_thread_lock=True)
+        assert tempfile.gettempdir() in captured["allowed_paths"]
+
+    def test_user_allowed_paths_preserved(self, tmp_path, monkeypatch):
+        wf = Workflow(graph=str(tmp_path / "wf.json"))
+        captured = {}
+
+        def fake_super_launch(*args, **kwargs):
+            captured["allowed_paths"] = kwargs.get("allowed_paths")
+            return (None, "http://127.0.0.1:7860/", None)
+
+        monkeypatch.setattr(gr.Blocks, "launch", fake_super_launch)
+        wf.launch(allowed_paths=["/extra/path"], prevent_thread_lock=True)
+        assert "/extra/path" in captured["allowed_paths"]
+        assert tempfile.gettempdir() in captured["allowed_paths"]
+
+    def test_none_allowed_paths_handled(self, tmp_path, monkeypatch):
+        wf = Workflow(graph=str(tmp_path / "wf.json"))
+        captured = {}
+
+        def fake_super_launch(*args, **kwargs):
+            captured["allowed_paths"] = kwargs.get("allowed_paths")
+            return (None, "http://127.0.0.1:7860/", None)
+
+        monkeypatch.setattr(gr.Blocks, "launch", fake_super_launch)
+        wf.launch(allowed_paths=None, prevent_thread_lock=True)
+        assert captured["allowed_paths"] == [tempfile.gettempdir()]
+
+
+class TestLaunchWriteTokenLink:
+    def test_edit_link_printed_locally(self, tmp_path, monkeypatch, capsys):
+        wf = Workflow(graph=str(tmp_path / "wf.json"))
+        monkeypatch.setattr(
+            gr.Blocks,
+            "launch",
+            lambda *a, **kw: (None, "http://127.0.0.1:7860/", None),
+        )
+        wf.launch(prevent_thread_lock=True)
+        out = capsys.readouterr().out
+        assert f"write_token={WRITE_TOKEN}" in out
+
+    def test_no_edit_link_on_spaces(self, tmp_path, monkeypatch, capsys):
+        wf = Workflow(graph=str(tmp_path / "wf.json"))
+        monkeypatch.setattr(workflow_module, "get_space", lambda: "owner/space")
+        monkeypatch.setattr(
+            gr.Blocks,
+            "launch",
+            lambda *a, **kw: (None, "http://127.0.0.1:7860/", None),
+        )
+        wf.launch(prevent_thread_lock=True)
+        out = capsys.readouterr().out
+        assert "write_token" not in out
+
+
+class TestLaunchInBrowser:
+    """The write-access link is opened automatically, but only when a browser on
+    this machine is plausibly the right place for it."""
+
+    def _launch(self, tmp_path, monkeypatch, **kwargs):
+        wf = Workflow(graph=str(tmp_path / "wf.json"))
+        monkeypatch.setattr(
+            gr.Blocks,
+            "launch",
+            lambda *a, **kw: (None, "http://127.0.0.1:7860/", None),
+        )
+        opened = []
+        monkeypatch.setattr(workflow_module.webbrowser, "open", opened.append)
+        wf.launch(prevent_thread_lock=True, **kwargs)
+        return opened
+
+    def test_explicit_true_opens_the_write_url(self, tmp_path, monkeypatch):
+        opened = self._launch(tmp_path, monkeypatch, inbrowser=True)
+        assert opened == [f"http://127.0.0.1:7860/?write_token={WRITE_TOKEN}"]
+
+    def test_explicit_false_never_opens(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GRADIO_WORKFLOW_INBROWSER", "true")
+        assert self._launch(tmp_path, monkeypatch, inbrowser=False) == []
+
+    def test_not_opened_under_pytest_by_default(self, tmp_path, monkeypatch):
+        # PYTEST_CURRENT_TEST is set for us, standing in for the CI/automation
+        # case this suppression exists for.
+        assert self._launch(tmp_path, monkeypatch) == []
+
+    def test_env_opt_out_beats_everything_else(self, monkeypatch):
+        monkeypatch.setenv("GRADIO_WORKFLOW_INBROWSER", "false")
+        monkeypatch.setenv("BROWSER", "/usr/bin/firefox")
+        assert workflow_module._should_auto_open_browser() is False
+
+    @pytest.mark.parametrize("env", ["CI", "SSH_CONNECTION"])
+    def test_remote_and_automated_contexts_suppress_it(self, env, monkeypatch):
+        monkeypatch.delenv("GRADIO_WORKFLOW_INBROWSER", raising=False)
+        monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+        monkeypatch.delenv("BROWSER", raising=False)
+        monkeypatch.setenv(env, "1" if env == "CI" else "1.2.3.4 22 5.6.7.8 22")
+        assert workflow_module._should_auto_open_browser() is False
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Token resolution
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestResolveToken:
+    def test_explicit_data_wins(self, monkeypatch):
+        monkeypatch.setattr(
+            workflow_module, "_get_locally_saved_hf_token", lambda: None
+        )
+        assert (
+            _resolve_token(["x", "y", "z", "manual"], 3, _make_oauth("oauth"))
+            == "manual"
+        )
+
+    def test_oauth_used_when_no_manual(self, monkeypatch):
+        monkeypatch.setattr(
+            workflow_module, "_get_locally_saved_hf_token", lambda: None
+        )
+        assert _resolve_token([], 3, _make_oauth("oauth-tok")) == "oauth-tok"
+
+    def test_local_token_requires_write_access(self, monkeypatch):
+        # A share-link visitor (no write token) must never see the host's
+        # locally saved HF token.
+        monkeypatch.setattr(
+            workflow_module,
+            "_get_locally_saved_hf_token",
+            lambda: "local-tok",
+        )
+        assert _resolve_token([], 3, None, _write_request()) == "local-tok"
+        assert _resolve_token([], 3, None, _make_request()) is None
+        assert _resolve_token([], 3, None, None) is None
+
+
+class TestGetToken:
+    def test_oauth_token_wins(self, monkeypatch):
+        monkeypatch.setattr(
+            workflow_module,
+            "_get_locally_saved_hf_token",
+            lambda: "local-tok",
+        )
+        assert get_token(token=_make_oauth("oauth-tok")) == "oauth-tok"
+
+    def test_local_token_requires_write_access(self, monkeypatch):
+        monkeypatch.setattr(
+            workflow_module,
+            "_get_locally_saved_hf_token",
+            lambda: "local-tok",
+        )
+        assert get_token(request=_write_request()) == "local-tok"
+        assert get_token(request=_make_request()) == ""
+        assert get_token() == ""
+
+    def test_local_hf_token_is_disabled_on_spaces(self, monkeypatch):
+        monkeypatch.setattr(workflow_module, "get_space", lambda: "owner/space")
+        assert _get_locally_saved_hf_token() is None
+
+
+class TestOAuthAvailable:
+    # Drives whether the frontend shows the "Sign in" button: OAuth is only
+    # wired up on a Space with hf_oauth enabled (OAUTH_CLIENT_ID provisioned).
+    def test_false_locally(self, monkeypatch):
+        monkeypatch.setattr(workflow_module, "get_space", lambda: None)
+        assert get_oauth_available() == "false"
+
+    def test_false_on_space_without_oauth(self, monkeypatch):
+        monkeypatch.setattr(workflow_module, "get_space", lambda: "owner/space")
+        monkeypatch.delenv("OAUTH_CLIENT_ID", raising=False)
+        assert get_oauth_available() == "false"
+
+    def test_true_on_space_with_oauth(self, monkeypatch):
+        monkeypatch.setattr(workflow_module, "get_space", lambda: "owner/space")
+        monkeypatch.setenv("OAUTH_CLIENT_ID", "client-id")
+        assert get_oauth_available() == "true"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Write access — local write token + Spaces OAuth ownership
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestWriteAccess:
+    def test_token_accepted_via_header_cookie_or_query(self):
+        assert _request_has_write_token(_make_request(header=WRITE_TOKEN))
+        assert _request_has_write_token(_write_request())
+        assert _request_has_write_token(_make_request(query=WRITE_TOKEN))
+        # Frontend suffixes the cookie name with the port; any suffix works.
+        assert _request_has_write_token(
+            _make_request(
+                cookie=f"other=1; gradio_workflow_write_token_8080={WRITE_TOKEN}"
+            )
+        )
+
+    def test_wrong_or_missing_token_denied(self):
+        assert not _request_has_write_token(
+            _make_request(cookie="gradio_workflow_write_token_7860=wrong")
+        )
+        assert not _request_has_write_token(_make_request(header="wrong"))
+        assert not _request_has_write_token(_make_request(query="wrong"))
+        assert not _request_has_write_token(_make_request())
+        assert not _request_has_write_token(None)
+
+    def test_write_token_ignored_on_spaces(self, monkeypatch):
+        # On Spaces only OAuth ownership grants write access; a leaked write
+        # token must not.
+        monkeypatch.setattr(workflow_module, "get_space", lambda: "owner/space")
+        assert has_write_access(_write_request(), None) is False
+
+
+class TestSaveWorkflowGating:
+    def _save_fn(self, tmp_path):
+        wf = Workflow(graph=str(tmp_path / "wf.json"))
+        canvas = next(
+            b for b in wf.blocks.values() if b.get_block_name() == "workflowcanvas"
+        )
+        return canvas.save_workflow
+
+    def test_save_rejected_without_write_access(self, tmp_path):
+        save = self._save_fn(tmp_path)
+        result = json.loads(save(['{"nodes": []}'], _make_request(), None))
+        assert result["error_type"] == "auth"
+        assert not os.path.exists(tmp_path / "wf.json")
+
+    def test_save_allowed_with_write_access(self, tmp_path):
+        save = self._save_fn(tmp_path)
+        # A valid schema_version 2 payload (save now validates the schema).
+        assert save(['{"schema_version": "2"}'], _write_request(), None) == "ok"
+        assert os.path.exists(tmp_path / "wf.json")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# _workflow_from_bind — graph generation from Python functions
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestWorkflowFromBind:
+    def test_generates_nodes_for_each_bound_fn(self):
+        result = json.loads(_workflow_from_bind({"shout": _shout, "add": _add}))
+        fns = {n["fn"] for n in result["nodes"]}
+        assert fns == {"shout", "add"}
+
+    def test_port_type_from_annotation(self):
+        result = json.loads(_workflow_from_bind({"add": _add}))
+        node = result["nodes"][0]
+        assert all(p["type"] == "number" for p in node["inputs"])
+
+    def test_bool_annotation_maps_to_boolean(self):
+        result = json.loads(_workflow_from_bind({"flag": _flag}))
+        node = result["nodes"][0]
+        assert node["inputs"][0]["type"] == "boolean"
+
+    def test_unannotated_param_defaults_to_text(self):
+        def plain(x):  # no annotation
+            return x
+
+        result = json.loads(_workflow_from_bind({"plain": plain}))
+        node = result["nodes"][0]
+        assert node["inputs"][0]["type"] == "text"
+
+    def test_edges_resolve_by_function_name(self):
+        result = json.loads(
+            _workflow_from_bind(
+                {"shout": _shout, "add": _add},
+                edges=[("shout", "add")],
+            )
+        )
+        assert len(result["edges"]) == 1
+        edge = result["edges"][0]
+        assert edge["from_node_id"] == "fn_shout"
+        assert edge["to_node_id"] == "fn_add"
+
+    def test_edges_resolve_by_port_label(self):
+        result = json.loads(
+            _workflow_from_bind(
+                {"add": _add, "shout": _shout},
+                edges=[("add.output", "shout.text")],
+            )
+        )
+        edge = result["edges"][0]
+        assert edge["from_port_id"] == "out_0"
+        assert edge["to_port_id"] == "in_text"
+
+    def test_unknown_function_in_edge_raises(self):
+        with pytest.raises(ValueError, match="no function 'nope'"):
+            _workflow_from_bind({"shout": _shout}, edges=[("nope", "shout")])
+
+    def test_unknown_port_label_raises(self):
+        with pytest.raises(ValueError, match="no .* port"):
+            _workflow_from_bind(
+                {"shout": _shout}, edges=[("shout.bogus", "shout.text")]
+            )
+
+    def test_zero_input_fn_gets_synthetic_input_port(self):
+        def noargs() -> str:
+            return ""
+
+        result = json.loads(_workflow_from_bind({"noargs": noargs}))
+        node = result["nodes"][0]
+        assert node["inputs"] == [{"id": "in_0", "label": "input", "type": "text"}]
+
+
+class TestDispatchModelEndpoint:
+    def test_legacy_in_n_port_ids_remap_to_schema_names(self):
+        client = MagicMock()
+        client.visual_question_answering.return_value = []
+        _dispatch_model_endpoint(
+            client,
+            "visual_question_answering",
+            {"in_0": {"url": "/f/a.png"}, "in_1": "what is this?"},
+        )
+        client.visual_question_answering.assert_called_once_with(
+            image="/f/a.png", question="what is this?"
+        )
+
+    def test_list_kwargs_coerced_from_strings(self):
+        client = MagicMock()
+        client.zero_shot_classification.return_value = []
+        _dispatch_model_endpoint(
+            client,
+            "zero_shot_classification",
+            {"text": "hello", "candidate_labels": "spam, ham\neggs"},
+        )
+        client.zero_shot_classification.assert_called_once_with(
+            text="hello", candidate_labels=["spam", "ham", "eggs"]
+        )
+
+        client.sentence_similarity.return_value = [0.5]
+        _dispatch_model_endpoint(
+            client,
+            "sentence_similarity",
+            {"sentence": "a, b", "other_sentences": "one, two\nthree"},
+        )
+        client.sentence_similarity.assert_called_once_with(
+            sentence="a, b", other_sentences=["one, two", "three"]
+        )
+
+    def test_zero_shot_without_labels_falls_back_to_text_classification(self):
+        client = MagicMock()
+        client.text_classification.return_value = []
+        _dispatch_model_endpoint(client, "zero_shot_classification", {"text": "hello"})
+        client.text_classification.assert_called_once_with(text="hello")
+        client.zero_shot_classification.assert_not_called()
+
+    @staticmethod
+    def _chunks(*, content="", reasoning="", finish_reason="stop"):
+        """Streamed chat-completion chunks, shaped like the router's."""
+        deltas = [SimpleNamespace(content=content, reasoning_content=reasoning)]
+        return [
+            SimpleNamespace(
+                choices=[SimpleNamespace(delta=d, finish_reason=None)],
+            )
+            for d in deltas
+        ] + [
+            SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        delta=SimpleNamespace(content="", reasoning_content=""),
+                        finish_reason=finish_reason,
+                    )
+                ]
+            )
+        ]
+
+    def test_chat_completion_shapes_a_multimodal_message(self, tmp_path):
+        image = tmp_path / "shot.png"
+        image.write_bytes(b"\x89PNG\r\n\x1a\n")
+        client = MagicMock()
+        client.chat_completion.return_value = self._chunks(content="<html></html>")
+
+        out = _dispatch_model_endpoint(
+            client,
+            "chat_completion",
+            {"image": {"path": str(image)}, "text": "rebuild this page"},
+        )
+
+        assert json.loads(out) == ["<html></html>"]
+        kwargs = client.chat_completion.call_args.kwargs
+        assert kwargs["stream"] is True
+        content = client.chat_completion.call_args.args[0][0]["content"]
+        assert content[0] == {"type": "text", "text": "rebuild this page"}
+        # Local files are inlined: the provider fetches image URLs itself and
+        # cannot reach a path on this machine.
+        assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+    def test_chat_completion_passes_through_remote_image_urls(self):
+        client = MagicMock()
+        client.chat_completion.return_value = self._chunks(content="ok")
+        _dispatch_model_endpoint(
+            client,
+            "chat_completion",
+            {"image": {"url": "https://example.com/a.png"}, "text": "what is this?"},
+        )
+        content = client.chat_completion.call_args.args[0][0]["content"]
+        assert content[1]["image_url"] == {"url": "https://example.com/a.png"}
+
+    def test_chat_completion_without_image_or_prompt_raises(self):
+        client = MagicMock()
+        with pytest.raises(ValueError, match="Connect a prompt or an image"):
+            _dispatch_model_endpoint(client, "chat_completion", {})
+        client.chat_completion.assert_not_called()
+
+    def test_chat_completion_blames_the_token_limit_when_only_reasoning(self):
+        client = MagicMock()
+        client.chat_completion.return_value = self._chunks(
+            reasoning="thinking" * 10, finish_reason="length"
+        )
+        with pytest.raises(ValueError, match="token limit"):
+            _dispatch_model_endpoint(
+                client, "chat_completion", {"text": "rebuild this page"}
+            )
+
+    def test_chat_completion_reports_finish_reason_when_empty(self):
+        client = MagicMock()
+        client.chat_completion.return_value = self._chunks(
+            finish_reason="content_filter"
+        )
+        with pytest.raises(ValueError, match="content_filter"):
+            _dispatch_model_endpoint(client, "chat_completion", {"text": "hello"})
+
+    def test_unsupported_endpoint_raises_clear_error(self):
+        from huggingface_hub import InferenceClient
+
+        client = InferenceClient(model="owner/model")
+        with pytest.raises(ValueError, match="huggingface_hub"):
+            _dispatch_model_endpoint(client, "depth_estimation", {})
+
+
+class TestGetModelEndpoints:
+    def test_schema_structure(self):
+        endpoints = json.loads(get_model_endpoints([]))
+        tti = next(e for e in endpoints if e["name"] == "text_to_image")
+        input_ids = {p["id"] for p in tti["inputs"]}
+        assert {"prompt"} <= input_ids
+        assert tti["outputs"][0]["type"] == "image"
+        assert all("name" in e and e["inputs"] and e["outputs"] for e in endpoints)
+
+
+class TestCallModel:
+    def test_kwargs_dict_path(self):
+        img = MagicMock()
+        img.save = lambda path: open(path, "wb").close()
+
+        with patch("huggingface_hub.InferenceClient") as mock_client:
+            mock_client.return_value.text_to_image.return_value = img
+            result = json.loads(
+                call_model(
+                    [
+                        "owner/model",
+                        "text_to_image",
+                        json.dumps(
+                            {"prompt": "cat", "width": 512, "negative_prompt": None}
+                        ),
+                        None,
+                        "auto",
+                    ]
+                )
+            )
+
+        mock_client.return_value.text_to_image.assert_called_once_with(
+            prompt="cat", width=512
+        )
+        assert result[0]["is_file"] is True
+
+    def test_legacy_list_path_and_unknown_endpoint(self):
+        with patch("huggingface_hub.InferenceClient") as mock_client:
+            mock_client.return_value.summarization.return_value = SimpleNamespace(
+                summary_text="short"
+            )
+            assert json.loads(
+                call_model(
+                    ["owner/m", "summarization", json.dumps(["long"]), None, "auto"]
+                )
+            ) == ["short"]
+
+        with patch("huggingface_hub.InferenceClient"):
+            assert "error" in json.loads(
+                call_model(
+                    ["owner/m", "no_such_method", json.dumps({"x": 1}), None, "auto"]
+                )
+            )
+
+    def test_legacy_list_args_map_onto_endpoint_schema(self):
+        with patch("huggingface_hub.InferenceClient") as mock_client:
+            mock_client.return_value.image_classification.return_value = [
+                SimpleNamespace(label="cat", score=0.9)
+            ]
+            result = json.loads(
+                call_model(
+                    [
+                        "owner/m",
+                        "image-classification",
+                        json.dumps([{"url": "/f/a.png"}]),
+                        None,
+                        "auto",
+                    ]
+                )
+            )
+        mock_client.return_value.image_classification.assert_called_once_with(
+            image="/f/a.png"
+        )
+        assert result == [[{"label": "cat", "score": 0.9}]]
+
+    def test_legacy_question_answering_returns_top_answer(self):
+        with patch("huggingface_hub.InferenceClient") as mock_client:
+            mock_client.return_value.question_answering.return_value = [
+                SimpleNamespace(answer="42", score=0.99)
+            ]
+            result = json.loads(
+                call_model(
+                    [
+                        "owner/m",
+                        "question-answering",
+                        json.dumps(["q?", "context"]),
+                        None,
+                        "auto",
+                    ]
+                )
+            )
+        mock_client.return_value.question_answering.assert_called_once_with(
+            question="q?", context="context"
+        )
+        assert result == ["42"]
+
+
+class TestCallModelValidation:
+    def test_url_shaped_model_id_is_rejected(self):
+        result = json.loads(call_model(["http://169.254.169.254/latest/meta-data/"]))
+        assert result.get("error_type") == "not_found"
+
+    def test_https_url_is_rejected(self):
+        result = json.loads(call_model(["https://attacker.example.com/endpoint"]))
+        assert result.get("error_type") == "not_found"
+
+    def test_empty_model_id_is_rejected(self):
+        result = json.loads(call_model([""]))
+        assert result.get("error_type") == "not_found"
+
+    def test_bare_repo_name_is_rejected(self):
+        result = json.loads(call_model(["gpt2"]))
+        assert result.get("error_type") == "not_found"
+
+    def test_valid_owner_repo_passes_validation(self, monkeypatch):
+        import sys
+        import types
+
+        fake_inference = MagicMock()
+        fake_inference.return_value.text_generation.return_value = "hello"
+
+        fake_hf = types.ModuleType("huggingface_hub")
+        fake_hf.InferenceClient = fake_inference  # type: ignore[attr-defined]
+        monkeypatch.setitem(sys.modules, "huggingface_hub", fake_hf)
+
+        result = json.loads(call_model(["owner/model"]))
+        assert "error" not in result
+
+
+class TestCallFn:
+    def test_queue_endpoint_registered_for_bound_fn(self, tmp_path):
+        wf = Workflow(graph=str(tmp_path / "wf.json"), bind={"my_fn": lambda x: x})
+        api_names = [
+            fn.api_name for fn in wf.fns.values() if isinstance(fn.api_name, str)
+        ]
+        assert "predict_fn_my_fn" in api_names
+
+
+class TestCallSpaceValidation:
+    def test_url_shaped_space_id_is_rejected(self):
+        result = json.loads(call_space(["http://169.254.169.254/"]))
+        assert result.get("error_type") == "not_found"
+
+    def test_valid_owner_repo_format_accepted_by_regex(self):
+        import re
+
+        pattern = r"[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+"
+        assert re.fullmatch(pattern, "owner/repo")
+        assert re.fullmatch(pattern, "my-org/my-space")
+        assert re.fullmatch(pattern, "http://host/path") is None
+
+
+class TestChatImageUrl:
+    def test_operator_outputs_land_in_the_cache_and_inline(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GRADIO_TEMP_DIR", str(tmp_path / "cache"))
+        saved = _save_tmp(b"operator-output", "png")
+
+        assert is_in_or_equal(saved["path"], get_upload_folder())
+        assert _chat_image_url({"path": saved["path"]}).startswith("data:")
+
+    def test_does_not_read_files_outside_the_cache(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GRADIO_TEMP_DIR", str(tmp_path / "cache"))
+        (tmp_path / "cache").mkdir()
+        outside = tmp_path / "elsewhere" / "private.png"
+        outside.parent.mkdir()
+        outside.write_bytes(b"must-not-be-read")
+
+        assert _chat_image_url({"path": str(outside)}) == str(outside)

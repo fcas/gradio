@@ -4,6 +4,7 @@ import numpy as np
 import pytest
 
 import gradio as gr
+from gradio import FileData
 
 
 class TestLabel:
@@ -13,11 +14,11 @@ class TestLabel:
         """
         y = "happy"
         label_output = gr.Label()
-        label = label_output.postprocess(y).model_dump()
+        label = label_output.postprocess(y).model_dump()  # type: ignore
         assert label == {"label": "happy", "confidences": None}
 
         y = {3: 0.7, 1: 0.2, 0: 0.1}
-        label = label_output.postprocess(y).model_dump()
+        label = label_output.postprocess(y).model_dump()  # type: ignore
         assert label == {
             "label": 3,
             "confidences": [
@@ -27,7 +28,7 @@ class TestLabel:
             ],
         }
         label_output = gr.Label(num_top_classes=2)
-        label = label_output.postprocess(y).model_dump()
+        label = label_output.postprocess(y).model_dump()  # type: ignore
 
         assert label == {
             "label": 3,
@@ -37,11 +38,11 @@ class TestLabel:
             ],
         }
         with pytest.raises(ValueError):
-            label_output.postprocess([1, 2, 3]).model_dump()
+            label_output.postprocess([1, 2, 3]).model_dump()  # type: ignore
 
         test_file_dir = Path(__file__).parent.parent / "test_files"
         path = str(test_file_dir / "test_label_json.json")
-        label_dict = label_output.postprocess(path).model_dump()
+        label_dict = label_output.postprocess(path).model_dump()  # type: ignore
         assert label_dict["label"] == "web site"
 
         assert label_output.get_config() == {
@@ -60,6 +61,9 @@ class TestLabel:
             "color": None,
             "_selectable": False,
             "key": None,
+            "preserved_by_key": ["value"],
+            "show_heading": True,
+            "buttons": [],
         }
 
     def test_color_argument(self):
@@ -70,7 +74,7 @@ class TestLabel:
         """
         Interface, process
         """
-        x_img = "test/test_files/bus.png"
+        x_img = FileData(path="test/test_files/bus.png")
 
         def rgb_distribution(img):
             rgb_dist = np.mean(img, axis=(0, 1))

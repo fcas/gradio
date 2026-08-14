@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+import pytest
+
 import gradio as gr
 
 
@@ -19,9 +21,11 @@ class TestSlider:
             "minimum": 10,
             "maximum": 20,
             "step": 1,
+            "precision": None,
             "value": 15,
             "name": "slider",
             "show_label": True,
+            "buttons": None,
             "label": "Slide Your Input",
             "container": True,
             "min_width": 160,
@@ -34,6 +38,7 @@ class TestSlider:
             "info": None,
             "_selectable": False,
             "key": None,
+            "preserved_by_key": ["value"],
         }
 
     def test_in_interface(self):
@@ -56,8 +61,9 @@ class TestSlider:
     def test_slider_get_random_value_on_load(self, mock_get_random_value):
         slider = gr.Slider(minimum=-5, maximum=10, randomize=True)
         assert slider.value == 7
+        assert slider.load_event_to_attach
         assert slider.load_event_to_attach[0]() == 7
-        assert slider.load_event_to_attach[1] is None
+        assert not slider.load_event_to_attach[1]
 
     @patch("random.randint", return_value=3)
     def test_slider_rounds_when_using_default_randomizer(self, mock_randint):
@@ -66,3 +72,31 @@ class TestSlider:
         # because 0.30000000000000004 != 0.3
         assert slider.get_random_value() == 0.3
         mock_randint.assert_called()
+
+    def test_raise_if_out_of_bounds(self):
+        """
+        raise_if_out_of_bounds
+        """
+        slider = gr.Slider(precision=2, minimum=0, maximum=10)
+        slider.preprocess(5)
+        with pytest.raises(gr.Error):
+            slider.preprocess(11)
+        with pytest.raises(gr.Error):
+            slider.preprocess(-1)
+
+    def test_precision(self):
+        """
+        Preprocess, postprocess
+        """
+        slider = gr.Slider(precision=None)
+        assert slider.preprocess(5.1) == 5.1
+        assert slider.api_info()["type"] == "number"
+
+        slider = gr.Slider(precision=0)
+        assert slider.preprocess(5.1) == 5
+        assert slider.api_info()["type"] == "integer"
+
+    @pytest.mark.parametrize("minimum,maximum", [(5, 5), (10, 5)])
+    def test_slider_requires_minimum_less_than_maximum(self, minimum, maximum):
+        with pytest.raises(ValueError, match="minimum must be less than maximum"):
+            gr.Slider(minimum=minimum, maximum=maximum)

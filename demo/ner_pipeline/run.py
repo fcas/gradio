@@ -2,7 +2,7 @@ from transformers import pipeline
 
 import gradio as gr
 
-ner_pipeline = pipeline("ner")
+ner_pipeline = pipeline("ner")  # type: ignore
 
 examples = [
     "Does Chicago have any stores and does Joe live here?",
@@ -10,12 +10,13 @@ examples = [
 
 def ner(text):
     output = ner_pipeline(text)
-    return {"text": text, "entities": output}    
+    return {"text": text, "entities": output}
 
 demo = gr.Interface(ner,
-             gr.Textbox(placeholder="Enter sentence here..."), 
+             gr.Textbox(placeholder="Enter sentence here..."),
              gr.HighlightedText(),
-             examples=examples)
+             examples=examples,
+             api_name="predict")
 
 if __name__ == "__main__":
     demo.launch()

@@ -8,10 +8,10 @@ def slowly_reverse(word, progress=gr.Progress()):
     new_string = ""
     for letter in progress.tqdm(word, desc="Reversing"):
         time.sleep(0.25)
-        new_string = letter + new_string
+        new_string = letter + new_string  # type: ignore
     return new_string
 
-demo = gr.Interface(slowly_reverse, gr.Text(), gr.Text())
+demo = gr.Interface(slowly_reverse, gr.Text(), gr.Text(), api_name="predict")
 
 if __name__ == "__main__":
     demo.launch()

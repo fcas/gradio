@@ -1,0 +1,99 @@
+
+<script lang="ts">
+    import {get_object} from "../../process_json.ts";
+    import ParamTable from "$lib/components/ParamTable.svelte";
+    import ShortcutTable from "$lib/components/ShortcutTable.svelte";
+    import DemosSection from "$lib/components/DemosSection.svelte";
+    import FunctionsSection from "$lib/components/FunctionsSection.svelte";
+    import GuidesSection from "$lib/components/GuidesSection.svelte";
+    import CopyButton from "$lib/components/CopyButton.svelte";
+    import BehaviorSection from "$lib/components/BehaviorSection.svelte";
+    import { style_formatted_text } from "$lib/text";
+
+
+    let obj = get_object("textbox");
+</script>
+
+<!--- Title -->
+# {obj.name}
+
+<!--- Usage -->
+```python
+gradio.Textbox(···)
+```
+
+
+
+<!--- Description -->
+### Description
+## {@html style_formatted_text(obj.description)}
+
+<!-- Behavior -->
+### Behavior
+
+<BehaviorSection name={obj.name} preprocess={obj.preprocess} postprocess={obj.postprocess} />
+
+
+<!--- Initialization -->
+### Initialization
+<ParamTable parameters={obj.parameters} anchor_links={obj.name}/>
+
+
+{#if obj.string_shortcuts && obj.string_shortcuts.length > 0}
+<!--- Shortcuts -->
+### Shortcuts
+<ShortcutTable shortcuts={obj.string_shortcuts} />
+{/if}
+### Common Patterns
+
+#### Multi-line text input
+
+By default, `gr.Textbox` renders as a single-line input. For longer text such as paragraphs or code, set `lines` to show multiple rows and optionally `max_lines` to cap the height:
+
+```python
+import gradio as gr
+
+def summarize(text):
+    return f"Received {len(text.split())} words."
+
+demo = gr.Interface(
+    fn=summarize,
+    inputs=gr.Textbox(lines=5, max_lines=10, label="Paste your text here"),
+    outputs="text",
+)
+```
+
+#### Password and sensitive input
+
+Set `type="password"` to mask characters as the user types. The value is passed as plain text to your function — masking is display-only:
+
+```python
+import gradio as gr
+
+def check(password):
+    return "Access granted" if password == "secret" else "Wrong password"
+
+demo = gr.Interface(
+    fn=check,
+    inputs=gr.Textbox(type="password", label="Enter password"),
+    outputs="text",
+)
+```
+
+{#if obj.demos && obj.demos.length > 0}
+<!--- Demos -->
+### Demos 
+<DemosSection demos={obj.demos} />
+{/if}
+
+{#if obj.fns && obj.fns.length > 0}
+<!--- Event Listeners -->
+### Event Listeners 
+<FunctionsSection fns={obj.fns} event_listeners={true} />
+{/if}
+
+{#if obj.guides && obj.guides.length > 0}
+<!--- Guides -->
+<!--- the guide section below is still necessary to scrape the guides on the side navigation -->
+<GuidesSection guides={obj.guides}/>
+{/if}

@@ -1,9 +1,22 @@
 <script lang="ts">
-	import { onDestroy } from "svelte";
 	import { Copy, Check } from "@gradio/icons";
+	import { IconButton } from "@gradio/atoms";
+	import type { CopyData } from "@gradio/utils";
+	import type { I18nFormatter } from "js/core/src/gradio_helper";
 
-	let copied = false;
-	export let value: string;
+	let {
+		value,
+		watermark = null,
+		i18n,
+		oncopy
+	}: {
+		value: string;
+		watermark?: string | null;
+		i18n: I18nFormatter;
+		oncopy?: (data: CopyData) => void;
+	} = $props();
+
+	let copied = $state(false);
 	let timer: NodeJS.Timeout;
 
 	function copy_feedback(): void {
@@ -16,11 +29,14 @@
 
 	async function handle_copy(): Promise<void> {
 		if ("clipboard" in navigator) {
-			await navigator.clipboard.writeText(value);
+			oncopy?.({ value: value });
+			const text_to_copy = watermark ? `${value}\n\n${watermark}` : value;
+			await navigator.clipboard.writeText(text_to_copy);
 			copy_feedback();
 		} else {
 			const textArea = document.createElement("textarea");
-			textArea.value = value;
+			const text_to_copy = watermark ? `${value}\n\n${watermark}` : value;
+			textArea.value = text_to_copy;
 
 			textArea.style.position = "absolute";
 			textArea.style.left = "-999999px";
@@ -39,41 +55,15 @@
 		}
 	}
 
-	onDestroy(() => {
-		if (timer) clearTimeout(timer);
+	$effect(() => {
+		return () => {
+			if (timer) clearTimeout(timer);
+		};
 	});
 </script>
 
-<button
-	on:click={handle_copy}
-	class="action"
-	title="copy"
-	aria-label={copied ? "Copied message" : "Copy message"}
->
-	{#if !copied}
-		<Copy />
-	{/if}
-	{#if copied}
-		<Check />
-	{/if}
-</button>
-
-<style>
-	button {
-		position: relative;
-		top: 0;
-		right: 0;
-		cursor: pointer;
-		color: var(--body-text-color-subdued);
-		margin-right: 5px;
-	}
-
-	button:hover {
-		color: var(--body-text-color);
-	}
-
-	.action {
-		width: 15px;
-		height: 14px;
-	}
-</style>
+<IconButton
+	onclick={handle_copy}
+	label={copied ? i18n("chatbot.copied_message") : i18n("chatbot.copy_message")}
+	Icon={copied ? Check : Copy}
+/>

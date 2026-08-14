@@ -5,22 +5,29 @@ each component. These demos are located in the `demo` directory."""
 from __future__ import annotations
 
 import abc
-import hashlib
 import json
-import sys
 import warnings
 from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any, Literal
 
 import gradio_client.utils as client_utils
 
 from gradio import utils
-from gradio.blocks import Block, BlockContext
+from gradio.blocks import Block
 from gradio.component_meta import ComponentMeta
-from gradio.data_classes import GradioDataModel, JsonData
+from gradio.data_classes import (
+    BaseModel,
+    DeveloperPath,
+    FileData,
+    FileDataDict,
+    GradioDataModel,
+    MediaStreamChunk,
+)
 from gradio.events import EventListener
+from gradio.i18n import I18nData
 from gradio.layouts import Form
 from gradio.processing_utils import move_files_to_cache
 
@@ -30,6 +37,8 @@ if TYPE_CHECKING:
     class DataframeData(TypedDict):
         headers: list[str]
         data: list[list[str | int | bool]]
+
+    from gradio.components import Timer
 
 
 class _Keywords(Enum):
@@ -103,19 +112,12 @@ class ComponentBase(ABC, metaclass=ComponentMeta):
 
     @property
     @abstractmethod
-    def skip_api(self):
+    def skip_api(self) -> bool:
         """Whether this component should be skipped from the api return value"""
 
     @classmethod
     def has_event(cls, event: str | EventListener) -> bool:
         return event in cls.EVENTS
-
-    @classmethod
-    def get_component_class_id(cls) -> str:
-        module_name = cls.__module__
-        module_path = sys.modules[module_name].__file__
-        module_hash = hashlib.md5(f"{cls.__name__}_{module_path}".encode()).hexdigest()
-        return module_hash
 
 
 def server(fn):
@@ -132,33 +134,30 @@ class Component(ComponentBase, Block):
         self,
         value: Any = None,
         *,
-        label: str | None = None,
-        info: str | None = None,
+        label: str | I18nData | None = None,
+        info: str | I18nData | None = None,
         show_label: bool | None = None,
         container: bool = True,
         scale: int | None = None,
         min_width: int | None = None,
         interactive: bool | None = None,
-        visible: bool = True,
+        visible: bool | Literal["hidden"] = True,
         elem_id: str | None = None,
         elem_classes: list[str] | str | None = None,
         render: bool = True,
-        key: int | str | None = None,
+        key: int | str | tuple[int | str, ...] | None = None,
+        preserved_by_key: list[str] | str | None = "value",
         load_fn: Callable | None = None,
-        every: float | None = None,
+        every: Timer | float | None = None,
+        inputs: Component | Sequence[Component] | set[Component] | None = None,
     ):
+        self._api_info_cache = None
         self.server_fns = [
             getattr(self, value)
             for value in dir(self.__class__)
             if callable(getattr(self, value))
             and getattr(getattr(self, value), "_is_server_fn", False)
         ]
-
-        # Svelte components expect elem_classes to be a list
-        # If we don't do this, returning a new component for an
-        # update will break the frontend
-        if not elem_classes:
-            elem_classes = []
 
         # This gets overridden when `select` is called
         self._selectable = False
@@ -172,6 +171,7 @@ class Component(ComponentBase, Block):
             visible=visible,
             render=render,
             key=key,
+            preserved_by_key=preserved_by_key,
         )
         if isinstance(self, StreamingInput):
             self.check_streamable()
@@ -196,9 +196,21 @@ class Component(ComponentBase, Block):
 
         # load_event is set in the Blocks.attach_load_events method
         self.load_event: None | dict[str, Any] = None
-        self.load_event_to_attach: None | tuple[Callable, float | None] = None
-        load_fn, initial_value = self.get_load_fn_and_initial_value(value)
+        self.load_event_to_attach: (
+            None
+            | tuple[
+                Callable,
+                list[tuple[Block, str]],
+                Component | Sequence[Component] | set[Component] | None,
+            ]
+        ) = None
+        load_fn, initial_value = self.get_load_fn_and_initial_value(value, inputs)
         initial_value = self.postprocess(initial_value)
+        # Serialize the json value so that it gets stored in the
+        # config as plain json, for images/audio etc. `move_files_to_cache`
+        # will call model_dump
+        if isinstance(initial_value, BaseModel):
+            initial_value = initial_value.model_dump()
         self.value = move_files_to_cache(
             initial_value,
             self,  # type: ignore
@@ -209,15 +221,13 @@ class Component(ComponentBase, Block):
             self.keep_in_cache.add(self.value["path"])
 
         if callable(load_fn):
-            self.attach_load_event(load_fn, every)
+            self.attach_load_event(load_fn, every, inputs)
 
-        self.component_class_id = self.__class__.get_component_class_id()
-
-    TEMPLATE_DIR = "./templates/"
+    TEMPLATE_DIR = DeveloperPath("./templates/")
     FRONTEND_DIR = "../../frontend/"
 
-    def get_config(self):
-        config = super().get_config()
+    def get_config(self, cls: type[Block] | None = None) -> dict[str, Any]:
+        config = super().get_config(cls)
         if self.info:
             config["info"] = self.info
         if len(self.server_fns):
@@ -230,18 +240,40 @@ class Component(ComponentBase, Block):
         return False
 
     @staticmethod
-    def get_load_fn_and_initial_value(value):
+    def get_load_fn_and_initial_value(value, inputs=None):
+        initial_value = None
         if callable(value):
-            initial_value = value()
+            if not inputs:
+                initial_value = value()
             load_fn = value
         else:
             initial_value = value
             load_fn = None
         return load_fn, initial_value
 
-    def attach_load_event(self, callable: Callable, every: float | None):
-        """Add a load event that runs `callable`, optionally every `every` seconds."""
-        self.load_event_to_attach = (callable, every)
+    def attach_load_event(
+        self,
+        callable: Callable,
+        every: Timer | float | None,
+        inputs: Component | Sequence[Component] | set[Component] | None = None,
+    ):
+        """Add an event that runs `callable`, optionally at interval specified by `every`."""
+        if isinstance(inputs, Component):
+            inputs = [inputs]
+        changeable_events: list[tuple[Block, str]] = (
+            [(i, "change") for i in inputs if hasattr(i, "change")] if inputs else []
+        )
+        if isinstance(every, (int, float)):
+            from gradio.components import Timer
+
+            every = Timer(every)
+        if every:
+            changeable_events.append((every, "tick"))
+        self.load_event_to_attach = (
+            callable,
+            changeable_events,
+            inputs,
+        )
 
     def process_example(self, value):
         """
@@ -284,11 +316,23 @@ class Component(ComponentBase, Block):
         The typing information for this component as a dictionary whose values are a list of 2 strings: [Python type, language-agnostic description].
         Keys of the dictionary are: raw_input, raw_output, serialized_input, serialized_output
         """
+        if self._api_info_cache is not None:
+            return self._api_info_cache
         if self.data_model is not None:
-            return self.data_model.model_json_schema()
+            schema = self.data_model.model_json_schema()
+            desc = schema.pop("description", None)
+            schema["additional_description"] = desc
+            self._api_info_cache = schema
+            return schema
         raise NotImplementedError(
             f"The api_info method has not been implemented for {self.get_block_name()}"
         )
+
+    def api_info_as_input(self) -> dict[str, Any]:
+        return self.api_info()
+
+    def api_info_as_output(self) -> dict[str, Any]:
+        return self.api_info()
 
     def flag(self, payload: Any, flag_dir: str | Path = "") -> str:
         """
@@ -298,7 +342,7 @@ class Component(ComponentBase, Block):
             payload = self.data_model.from_json(payload)
             Path(flag_dir).mkdir(exist_ok=True)
             payload = payload.copy_to_dir(flag_dir).model_dump()
-        if isinstance(payload, JsonData):
+        if isinstance(payload, BaseModel):
             payload = payload.model_dump()
         if not isinstance(payload, str):
             payload = json.dumps(payload)
@@ -314,6 +358,13 @@ class Component(ComponentBase, Block):
 
 
 class FormComponent(Component):
+    """
+    A base class for components that are typically used in forms (e.g. Textbox, Dropdown). These
+    components will be grouped together in the UI to provide a more condensed layout. Components
+    that are not rendered in the UI (e.g. State) should also inherit from this class, as it will
+    prevent them from breaking the grouping, see: https://github.com/gradio-app/gradio/issues/10330
+    """
+
     def get_expected_parent(self) -> type[Form] | None:
         if getattr(self, "container", None) is False:
             return None
@@ -322,9 +373,6 @@ class FormComponent(Component):
     def preprocess(self, payload: Any) -> Any:
         return payload
 
-    def postprocess(self, value):
-        return value
-
 
 class StreamingOutput(metaclass=abc.ABCMeta):
     def __init__(self, *args, **kwargs) -> None:
@@ -332,9 +380,24 @@ class StreamingOutput(metaclass=abc.ABCMeta):
         self.streaming: bool
 
     @abc.abstractmethod
-    def stream_output(
+    async def stream_output(
         self, value, output_id: str, first_chunk: bool
-    ) -> tuple[bytes, Any]:
+    ) -> tuple[MediaStreamChunk | None, FileDataDict | dict]:
+        pass
+
+    @abc.abstractmethod
+    async def combine_stream(
+        self,
+        stream: list[bytes],
+        desired_output_format: str | None = None,
+        only_file=False,
+    ) -> GradioDataModel | FileData:
+        """Combine all of the stream chunks into a single file.
+
+        This is needed for downloading the stream and for caching examples.
+        If `only_file` is True, only the FileData corresponding to the file should be returned (needed for downloading the stream).
+        The desired_output_format optionally converts the combined file. Should only be used for cached examples.
+        """
         pass
 
 
@@ -350,8 +413,6 @@ class StreamingInput(metaclass=abc.ABCMeta):
 
 def component(cls_name: str, render: bool) -> Component:
     obj = utils.component_or_layout_class(cls_name)(render=render)
-    if isinstance(obj, BlockContext):
-        raise ValueError(f"Invalid component: {obj.__class__}")
     if not isinstance(obj, Component):
         raise TypeError(f"Expected a Component instance, but got {obj.__class__}")
     return obj
@@ -370,16 +431,14 @@ def get_component_instance(
     if isinstance(comp, str):
         component_obj = component(comp, render=render)
     elif isinstance(comp, dict):
-        name = comp.pop("name")
+        name = comp.pop("name")  # type: ignore
         component_cls = utils.component_or_layout_class(name)
-        component_obj = component_cls(**comp, render=render)
-        if isinstance(component_obj, BlockContext):
-            raise ValueError(f"Invalid component: {name}")
+        component_obj = component_cls(**comp, render=render)  # type: ignore
     elif isinstance(comp, Component):
         component_obj = comp
     else:
         raise ValueError(
-            f"Component must provided as a `str` or `dict` or `Component` but is {comp}"
+            f"Component must be provided as a `str` or `dict` or `Component` but is {comp}"
         )
 
     if render and not component_obj.is_rendered:

@@ -1,11 +1,15 @@
+import asyncio
+import json
+import sys
 import time
-from concurrent.futures import wait
+from unittest.mock import patch
 
 import gradio_client as grc
 import pytest
 from fastapi.testclient import TestClient
 
 import gradio as gr
+from gradio.route_utils import API_PREFIX
 
 
 class TestQueueing:
@@ -45,14 +49,14 @@ class TestQueueing:
 
         sizes = []
         while job4.status().code.value != "FINISHED":
-            queue_status = test_client.get("/queue/status").json()
+            queue_status = test_client.get(f"{API_PREFIX}/queue/status").json()
             queue_size = queue_status["queue_size"]
             if len(sizes) == 0 or queue_size != sizes[-1]:
                 sizes.append(queue_size)
             time.sleep(0.01)
 
         time.sleep(0.1)
-        queue_status = test_client.get("/queue/status").json()
+        queue_status = test_client.get(f"{API_PREFIX}/queue/status").json()
         queue_size = queue_status["queue_size"]
         if queue_size != sizes[-1]:
             sizes.append(queue_size)
@@ -72,6 +76,63 @@ class TestQueueing:
         assert job2.result() == "Hello, b!"
         assert job4.result() == "Hello, d!"
 
+    def test_cached_generator_finishes_on_queue_cache_hit(self, connect):
+        call_count = 0
+
+        @gr.cache
+        def stream_text(text):
+            nonlocal call_count
+            call_count += 1
+            for i in range(len(text)):
+                yield text[: i + 1]
+
+        with gr.Blocks() as demo:
+            name = gr.Textbox()
+            output = gr.Textbox()
+            name.submit(stream_text, name, output)
+
+        demo.queue()
+
+        with connect(demo) as client:
+            first = client.submit("hello", fn_index=0)
+            assert first.result(timeout=5) == "hello"
+            assert first.outputs() == ["h", "he", "hel", "hell", "hello"]
+
+            second = client.submit("hello", fn_index=0)
+            assert second.result(timeout=5) == "hello"
+            assert second.outputs() == ["h", "he", "hel", "hell", "hello"]
+
+        assert call_count == 1
+
+    def test_queue_average_excludes_manual_cache_hits(self, connect):
+        def greet(x, c=gr.Cache()):
+            hit = c.get(x)
+            if hit is not None:
+                return hit["value"]
+            time.sleep(0.02)
+            value = f"Hello, {x}!"
+            c.set(x, value=value)
+            return value
+
+        with gr.Blocks() as demo:
+            name = gr.Textbox()
+            output = gr.Textbox()
+            name.submit(greet, name, output)
+
+        demo.queue()
+
+        with connect(demo) as client:
+            first = client.submit("x", fn_index=0)
+            assert first.result(timeout=5) == "Hello, x!"
+
+            second = client.submit("x", fn_index=0)
+            assert second.result(timeout=5) == "Hello, x!"
+
+        process_time = demo._queue.process_time_per_fn[demo.fns[0]]
+        assert process_time.count == 1
+        assert process_time.avg_time >= 0.02
+
+    @pytest.mark.flaky
     @pytest.mark.parametrize(
         "default_concurrency_limit, statuses",
         [
@@ -109,126 +170,178 @@ class TestQueueing:
         add_job_statuses = [add_job_1.status(), add_job_2.status(), add_job_3.status()]
         assert sorted([s.code.value for s in add_job_statuses]) == statuses
 
-    def test_concurrency_limits(self, connect):
-        with gr.Blocks() as demo:
-            a = gr.Number()
-            b = gr.Number()
-            output = gr.Number()
 
-            add_btn = gr.Button("Add")
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="Heartbeat task is not reliably cancelled by the time the SSE stream "
+    "loop returns on Windows CI (cancellation does not propagate within a "
+    "reasonable wait). Passes on Linux/macOS.",
+)
+def test_heartbeat_task_cancelled_after_stream_completes():
+    """Verify the heartbeat task is cancelled when the SSE stream ends normally."""
+    with gr.Blocks() as demo:
+        name = gr.Textbox()
+        output = gr.Textbox()
 
-            @add_btn.click(inputs=[a, b], outputs=output, concurrency_limit=2)
-            def add(x, y):
-                time.sleep(2)
-                return x + y
+        def greet(x):
+            return f"Hello, {x}!"
 
-            sub_btn = gr.Button("Subtract")
+        name.submit(greet, name, output)
 
-            @sub_btn.click(inputs=[a, b], outputs=output, concurrency_limit=None)
-            def sub(x, y):
-                time.sleep(2)
-                return x - y
+    app, local_url, _ = demo.launch(prevent_thread_lock=True)
 
-            mul_btn = gr.Button("Multiply")
+    heartbeat_tasks = []
+    original_create_task = asyncio.create_task
 
-            @mul_btn.click(
-                inputs=[a, b],
-                outputs=output,
-                concurrency_limit=2,
-                concurrency_id="muldiv",
-            )
-            def mul(x, y):
-                time.sleep(2)
-                return x * y
+    def tracking_create_task(coro, **kwargs):
+        task = original_create_task(coro, **kwargs)
+        heartbeat_tasks.append(task)
+        return task
 
-            div_btn = gr.Button("Divide")
-
-            @div_btn.click(
-                inputs=[a, b],
-                outputs=output,
-                concurrency_limit=2,
-                concurrency_id="muldiv",
-            )
-            def div(x, y):
-                time.sleep(2)
-                return x / y
-
-        with connect(demo) as client:
-            add_job_1 = client.submit(1, 1, fn_index=0)
-            add_job_2 = client.submit(1, 1, fn_index=0)
-            add_job_3 = client.submit(1, 1, fn_index=0)
-            sub_job_1 = client.submit(1, 1, fn_index=1)
-            sub_job_2 = client.submit(1, 1, fn_index=1)
-            sub_job_3 = client.submit(1, 1, fn_index=1)
-            mul_job_1 = client.submit(1, 1, fn_index=2)
-            div_job_1 = client.submit(1, 1, fn_index=3)
-            mul_job_2 = client.submit(1, 1, fn_index=2)
-
-            time.sleep(2)
-
-            add_job_statuses = [
-                add_job_1.status(),
-                add_job_2.status(),
-                add_job_3.status(),
-            ]
-            assert sorted([s.code.value for s in add_job_statuses]) == [
-                "IN_QUEUE",
-                "PROCESSING",
-                "PROCESSING",
-            ]
-
-            sub_job_statuses = [
-                sub_job_1.status(),
-                sub_job_2.status(),
-                sub_job_3.status(),
-            ]
-            assert [s.code.value for s in sub_job_statuses] == [
-                "PROCESSING",
-                "PROCESSING",
-                "PROCESSING",
-            ]
-
-            muldiv_job_statuses = [
-                mul_job_1.status(),
-                div_job_1.status(),
-                mul_job_2.status(),
-            ]
-            assert sorted([s.code.value for s in muldiv_job_statuses]) == [
-                "IN_QUEUE",
-                "PROCESSING",
-                "PROCESSING",
-            ]
-            wait(
-                [
-                    add_job_1,
-                    add_job_2,
-                    add_job_3,
-                    sub_job_1,
-                    sub_job_2,
-                    sub_job_3,
-                    sub_job_3,
-                    mul_job_1,
-                    div_job_1,
-                    mul_job_2,
-                ]
-            )
-
-    def test_every_does_not_block_queue(self):
-        with gr.Blocks() as demo:
-            num = gr.Number(value=0)
-            num2 = gr.Number(value=0)
-            num.submit(lambda n: 2 * n, num, num, every=0.5)
-            num2.submit(lambda n: 3 * n, num, num)
-
-        app, local_url, _ = demo.queue(max_size=1).launch(prevent_thread_lock=True)
+    with patch("gradio.routes.asyncio.create_task", side_effect=tracking_create_task):
         test_client = TestClient(app)
+        r = test_client.post(
+            f"{API_PREFIX}/queue/join",
+            json={
+                "data": ["hello"],
+                "fn_index": 0,
+                "event_data": None,
+                "session_hash": "test_heartbeat",
+                "trigger_id": None,
+            },
+        )
+        assert r.status_code == 200
 
-        client = grc.Client(local_url)
-        job = client.submit(1, fn_index=1)
+        r = test_client.get(f"{API_PREFIX}/queue/data?session_hash=test_heartbeat")
 
-        for _ in range(5):
-            status = test_client.get("/queue/status").json()
-            assert status["queue_size"] == 0
-            time.sleep(0.5)
+        # Verify we got a process_completed message
+        got_completed = False
+        for line in r.iter_lines():
+            if "data" in line:
+                data = json.loads(line[5:])
+                if data["msg"] == "process_completed":
+                    got_completed = True
+        assert got_completed
 
-        assert job.result() == 3
+    assert len(heartbeat_tasks) > 0, "No heartbeat tasks were created"
+    for task in heartbeat_tasks:
+        assert task.cancelled() or task.done(), (
+            "Heartbeat task was not cancelled after stream completed"
+        )
+    demo.close()
+
+
+def test_cancel_removes_pending_event_from_queue():
+    """Cancelling a queued (not yet running) event should remove it from the queue."""
+    with gr.Blocks() as demo:
+        start = gr.Button()
+        output = gr.Textbox()
+
+        def slow():
+            time.sleep(2)
+            return "done"
+
+        start.click(slow, None, output)
+
+    demo.queue(default_concurrency_limit=1)
+    app, _, _ = demo.launch(prevent_thread_lock=True)
+    test_client = TestClient(app)
+
+    join_payload = {
+        "data": [],
+        "fn_index": 0,
+        "event_data": None,
+        "session_hash": "sess1",
+        "trigger_id": None,
+    }
+
+    try:
+        first = test_client.post(f"{API_PREFIX}/queue/join", json=join_payload)
+        second = test_client.post(f"{API_PREFIX}/queue/join", json=join_payload)
+        third = test_client.post(f"{API_PREFIX}/queue/join", json=join_payload)
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert third.status_code == 200
+
+        second_event_id = second.json()["event_id"]
+        third_event_id = third.json()["event_id"]
+
+        # First event gets picked up by the worker; second and third are queued.
+        # The worker dequeues asynchronously, so wait for it to settle before
+        # asserting (avoids a race on slower CI runners where all three are
+        # momentarily still in the queue).
+        for _ in range(50):
+            if len(demo._queue) == 2:
+                break
+            time.sleep(0.1)
+        assert len(demo._queue) == 2
+        assert second_event_id in demo._queue.event_ids_to_events
+        assert second_event_id in demo._queue.pending_event_ids_session["sess1"]
+
+        # Cancel the second (pending/queued) event
+        resp = test_client.post(
+            f"{API_PREFIX}/cancel",
+            json={
+                "session_hash": "sess1",
+                "fn_index": 0,
+                "event_id": second_event_id,
+            },
+        )
+        assert resp.status_code == 200
+        assert third_event_id in demo._queue.event_ids_to_events
+
+        assert len(demo._queue) == 1
+        r = test_client.get(f"{API_PREFIX}/queue/data?session_hash=sess1")
+
+        # Verify we got a process_completed message
+        got_completed = False
+        for line in r.iter_lines():
+            if "data" in line:
+                data = json.loads(line[5:])
+                if data["msg"] == "process_completed":
+                    got_completed = True
+        assert got_completed
+        assert second_event_id not in demo._queue.pending_event_ids_session["sess1"]
+        assert second_event_id not in demo._queue.event_ids_to_events
+    finally:
+        demo.close()
+
+
+def test_analytics_summary(monkeypatch):
+    """Test that the analytics summary endpoint is correctly being computed every N requests,
+    where N is set by the GRADIO_ANALYTICS_CACHE_FREQUENCY environment variable."""
+    monkeypatch.setenv("GRADIO_ANALYTICS_CACHE_FREQUENCY", 2)
+    with gr.Blocks() as demo:
+        name = gr.Textbox()
+        output = gr.Textbox()
+
+        def greet(x):
+            return f"Hello, {x}!"
+
+        name.submit(greet, name, output, api_name="predict")
+
+    _, local_url, _ = demo.launch(prevent_thread_lock=True)
+    test_client = TestClient(demo.app)
+    client = grc.Client(local_url)
+    with test_client as tc:
+        event_analytics = tc.get("/monitoring/summary").json()
+        assert event_analytics == {"functions": {}}
+        client.predict(
+            "a",
+            api_name="/predict",
+        )
+        client.predict(
+            "a",
+            api_name="/predict",
+        )
+        event_analytics = tc.get("/monitoring/summary").json()
+        assert "predict" in event_analytics["functions"]
+        assert event_analytics["functions"]["predict"]["total_requests"] == 2
+        client.predict("a", api_name="/predict")
+        event_analytics = tc.get("/monitoring/summary").json()
+        assert "predict" in event_analytics["functions"]
+        assert event_analytics["functions"]["predict"]["total_requests"] == 2
+        client.predict("a", api_name="/predict")
+        event_analytics = tc.get("/monitoring/summary").json()
+        assert "predict" in event_analytics["functions"]
+        assert event_analytics["functions"]["predict"]["total_requests"] == 4

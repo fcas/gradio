@@ -1,20 +1,29 @@
-import { QUEUE_FULL_MSG, SPACE_METADATA_ERROR_MSG } from "../constants";
+import {
+	INVALID_URL_MSG,
+	QUEUE_FULL_MSG,
+	SPACE_NOT_FOUND_MSG
+} from "../constants";
 import { beforeAll, afterEach, afterAll, it, expect, describe } from "vitest";
 import {
 	handle_message,
 	get_description,
 	get_type,
 	process_endpoint,
-	map_data_to_params
+	join_urls,
+	map_data_to_params,
+	transform_api_info
 } from "../helpers/api_info";
 import { initialise_server } from "./server";
 import { transformed_api_info } from "./test_data";
 
-const server = initialise_server();
+let server: Awaited<ReturnType<typeof initialise_server>>;
 
-beforeAll(() => server.listen());
+beforeAll(async () => {
+	server = await initialise_server();
+	await server.start({ quiet: true });
+});
 afterEach(() => server.resetHandlers());
-afterAll(() => server.close());
+afterAll(() => server.stop());
 
 describe("handle_message", () => {
 	it("should return type 'data' when msg is 'send_data'", () => {
@@ -176,6 +185,34 @@ describe("handle_message", () => {
 		});
 	});
 
+	it("should carry changed_state_ids in the streaming status when msg is 'process_streaming'", () => {
+		const data = {
+			msg: "process_streaming",
+			success: true,
+			code: 200,
+			time_limit: 30,
+			eta: 5,
+			progress_data: { current: 50, total: 100 },
+			output: { data: [1], changed_state_ids: [3] }
+		};
+		const last_status = "pending";
+		const result = handle_message(data, last_status);
+		expect(result).toEqual({
+			type: "streaming",
+			status: {
+				queue: true,
+				message: undefined,
+				stage: "streaming",
+				time_limit: 30,
+				code: 200,
+				progress_data: { current: 50, total: 100 },
+				changed_state_ids: [3],
+				eta: 5
+			},
+			data: { data: [1], changed_state_ids: [3] }
+		});
+	});
+
 	it("should return type 'complete' with success status when msg is 'process_completed' and success is true", () => {
 		const data = {
 			msg: "process_completed",
@@ -204,8 +241,11 @@ describe("handle_message", () => {
 			msg: "process_completed",
 			success: false,
 			code: 500,
+			duration: undefined,
 			progress_data: { current: 100, total: 100 },
-			output: { error: "Some error message" }
+			output: { error: "Some error message" },
+			title: "Error",
+			visible: undefined
 		};
 		const last_status = "pending";
 		const result = handle_message(data, last_status);
@@ -216,7 +256,10 @@ describe("handle_message", () => {
 				message: "Some error message",
 				stage: "error",
 				code: 500,
-				success: false
+				success: false,
+				duration: undefined,
+				title: "Error",
+				visible: undefined
 			}
 		});
 	});
@@ -233,6 +276,7 @@ describe("handle_message", () => {
 		const result = handle_message(data, last_status);
 		expect(result).toEqual({
 			type: "update",
+			original_msg: "process_starts",
 			status: {
 				queue: true,
 				stage: "pending",
@@ -416,7 +460,7 @@ describe("process_endpoint", () => {
 		const app_reference = "hmb/hello_world";
 		const host = "hmb-hello-world.hf.space";
 
-		const hf_token = "hf_token";
+		const token = "hf_token";
 		const expected = {
 			space_id: app_reference,
 			host,
@@ -424,21 +468,17 @@ describe("process_endpoint", () => {
 			http_protocol: "https:"
 		};
 
-		const result = await process_endpoint(app_reference, hf_token);
+		const result = await process_endpoint(app_reference, token);
 		expect(result).toEqual(expected);
 	});
 
-	it("should throw an error when fetching space metadata fails", async () => {
+	it("should throw a clear error when the space does not exist or is private", async () => {
 		const app_reference = "hmb/bye_world";
-		const hf_token = "hf_token";
+		const token = "hf_token";
 
-		try {
-			await process_endpoint(app_reference, hf_token);
-		} catch (error) {
-			expect(error.message).toEqual(
-				SPACE_METADATA_ERROR_MSG + "Unexpected end of JSON input"
-			);
-		}
+		await expect(process_endpoint(app_reference, token)).rejects.toThrow(
+			SPACE_NOT_FOUND_MSG(app_reference, 404)
+		);
 	});
 
 	it("should return the correct data when app_reference is a valid space domain", async () => {
@@ -454,6 +494,79 @@ describe("process_endpoint", () => {
 
 		const result = await process_endpoint("hmb/hello_world");
 		expect(result).toEqual(expected);
+	});
+
+	it("processes local server URLs correctly", async () => {
+		const local_url = "http://localhost:7860/gradio";
+		const response_local_url = await process_endpoint(local_url);
+		expect(response_local_url.space_id).toBe(false);
+		expect(response_local_url.host).toBe("localhost:7860/gradio");
+
+		const local_url_2 = "http://localhost:7860/gradio/";
+		const response_local_url_2 = await process_endpoint(local_url_2);
+		expect(response_local_url_2.space_id).toBe(false);
+		expect(response_local_url_2.host).toBe("localhost:7860/gradio");
+	});
+
+	it("handles hugging face space references", async () => {
+		const space_id = "hmb/hello_world";
+
+		const response = await process_endpoint(space_id);
+		expect(response.space_id).toBe(space_id);
+		expect(response.host).toContain("hf.space");
+	});
+
+	it("handles hugging face domain URLs", async () => {
+		const app_reference = "https://hmb-hello-world.hf.space/";
+		const response = await process_endpoint(app_reference);
+		expect(response.space_id).toBe("hmb-hello-world");
+		expect(response.host).toBe("hmb-hello-world.hf.space");
+	});
+
+	it("handles huggingface subpath urls", async () => {
+		const app_reference =
+			"https://pngwn-pr-demos-test.hf.space/demo/audio_debugger/";
+		const response = await process_endpoint(app_reference);
+		expect(response.space_id).toBe("pngwn-pr-demos-test");
+		expect(response.host).toBe(
+			"pngwn-pr-demos-test.hf.space/demo/audio_debugger"
+		);
+
+		expect(response.http_protocol).toBe("https:");
+	});
+});
+
+describe("join_urls", () => {
+	it("joins URLs correctly", () => {
+		expect(join_urls("http://localhost:7860", "/gradio")).toBe(
+			"http://localhost:7860/gradio"
+		);
+		expect(join_urls("http://localhost:7860/", "/gradio")).toBe(
+			"http://localhost:7860/gradio"
+		);
+		expect(join_urls("http://localhost:7860", "app/", "/gradio")).toBe(
+			"http://localhost:7860/app/gradio"
+		);
+		expect(join_urls("http://localhost:7860/", "/app/", "/gradio/")).toBe(
+			"http://localhost:7860/app/gradio/"
+		);
+
+		expect(join_urls("http://127.0.0.1:8000/app", "/config")).toBe(
+			"http://127.0.0.1:8000/app/config"
+		);
+
+		expect(join_urls("http://127.0.0.1:8000/app/gradio", "/config")).toBe(
+			"http://127.0.0.1:8000/app/gradio/config"
+		);
+	});
+	it("throws an error when the URLs are not valid", () => {
+		expect(() => join_urls("localhost:7860", "/gradio")).toThrowError(
+			INVALID_URL_MSG
+		);
+
+		expect(() => join_urls("localhost:7860", "/gradio", "app")).toThrowError(
+			INVALID_URL_MSG
+		);
 	});
 });
 
@@ -509,17 +622,33 @@ describe("map_data_params", () => {
 		}
 	];
 
+	let endpoint_info = test_data.named_endpoints["/predict"];
+
 	it("should return an array of data when data is an array", () => {
 		const data = [1, 2];
 
-		const result = map_data_to_params(data, transformed_api_info);
+		const result = map_data_to_params(data, endpoint_info);
 		expect(result).toEqual(data);
+	});
+
+	it("should return an empty array when data is an empty array", () => {
+		const data: unknown[] = [];
+
+		const result = map_data_to_params(data, endpoint_info);
+		expect(result).toEqual(data);
+	});
+
+	it("should return an empty array when data is not defined", () => {
+		const data = undefined;
+
+		const result = map_data_to_params(data, endpoint_info);
+		expect(result).toEqual([]);
 	});
 
 	it("should return the data when too many arguments are provided for the endpoint", () => {
 		const data = [1, 2, 3, 4];
 
-		const result = map_data_to_params(data, transformed_api_info);
+		const result = map_data_to_params(data, endpoint_info);
 		expect(result).toEqual(data);
 	});
 
@@ -530,7 +659,7 @@ describe("map_data_params", () => {
 			param3: 3
 		};
 
-		const result = map_data_to_params(data, transformed_api_info);
+		const result = map_data_to_params(data, endpoint_info);
 		expect(result).toEqual([1, 2, 3]);
 	});
 
@@ -540,7 +669,7 @@ describe("map_data_params", () => {
 			param2: 2
 		};
 
-		const result = map_data_to_params(data, transformed_api_info);
+		const result = map_data_to_params(data, endpoint_info);
 		expect(result).toEqual([1, 2, 3]);
 	});
 
@@ -552,7 +681,7 @@ describe("map_data_params", () => {
 			param4: 4
 		};
 
-		expect(() => map_data_to_params(data, transformed_api_info)).toThrowError(
+		expect(() => map_data_to_params(data, endpoint_info)).toThrowError(
 			"Parameter `param4` is not a valid keyword argument. Please refer to the API for usage."
 		);
 	});
@@ -560,8 +689,78 @@ describe("map_data_params", () => {
 	it("should throw an error when no value is provided for a required parameter", () => {
 		const data = {};
 
-		expect(() => map_data_to_params(data, transformed_api_info)).toThrowError(
+		expect(() => map_data_to_params(data, endpoint_info)).toThrowError(
 			"No value provided for required parameter: param1"
 		);
+	});
+});
+
+describe("transform_api_info", () => {
+	it("defaults parameters and returns to empty arrays when an endpoint entry is malformed", () => {
+		const api_info = {
+			named_endpoints: {
+				// missing `parameters` and `returns`, as returned by some legacy
+				// or misbehaving apps (see issue #10945)
+				"/predict": {}
+			},
+			unnamed_endpoints: {}
+		} as any;
+		const config = {
+			dependencies: [
+				{
+					id: 0,
+					api_name: "predict",
+					inputs: [1],
+					outputs: [2],
+					types: { generator: false, cancel: false }
+				}
+			],
+			components: [
+				{ id: 1, type: "textbox", props: {} },
+				{ id: 2, type: "textbox", props: {} }
+			]
+		} as any;
+
+		const result = transform_api_info(api_info, config, { predict: 0 });
+
+		expect(result.named_endpoints["/predict"].parameters).toEqual([]);
+		expect(result.named_endpoints["/predict"].returns).toEqual([]);
+	});
+
+	it("keeps oauth_token, which submit() needs to decide where a token may be sent", () => {
+		const api_info = {
+			named_endpoints: {
+				"/report": { parameters: [], returns: [], oauth_token: "optional" },
+				"/calculator": { parameters: [], returns: [] }
+			},
+			unnamed_endpoints: {}
+		} as any;
+		const config = {
+			dependencies: [
+				{
+					id: 0,
+					api_name: "report",
+					inputs: [],
+					outputs: [],
+					types: { generator: false, cancel: false }
+				},
+				{
+					id: 1,
+					api_name: "calculator",
+					inputs: [],
+					outputs: [],
+					types: { generator: false, cancel: false }
+				}
+			],
+			components: []
+		} as any;
+
+		const result = transform_api_info(api_info, config, {
+			report: 0,
+			calculator: 1
+		});
+
+		expect(result.named_endpoints["/report"].oauth_token).toBe("optional");
+		expect(result.named_endpoints["/calculator"].oauth_token).toBeUndefined();
 	});
 });

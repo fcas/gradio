@@ -11,8 +11,8 @@ export async function upload_files(
 	const headers: {
 		Authorization?: string;
 	} = {};
-	if (this?.options?.hf_token) {
-		headers.Authorization = `Bearer ${this.options.hf_token}`;
+	if (this?.options?.token) {
+		headers.Authorization = `Bearer ${this.options.token}`;
 	}
 
 	const chunkSize = 1000;
@@ -27,13 +27,14 @@ export async function upload_files(
 		});
 		try {
 			const upload_url = upload_id
-				? `${root_url}/upload?upload_id=${upload_id}`
-				: `${root_url}/${UPLOAD_URL}`;
+				? `${root_url}${this.api_prefix}/${UPLOAD_URL}?upload_id=${upload_id}`
+				: `${root_url}${this.api_prefix}/${UPLOAD_URL}`;
 
 			response = await this.fetch(upload_url, {
 				method: "POST",
 				body: formData,
-				headers
+				headers,
+				credentials: this.options.credentials ?? "same-origin"
 			});
 		} catch (e) {
 			throw new Error(BROKEN_CONNECTION_MSG + (e as Error).message);

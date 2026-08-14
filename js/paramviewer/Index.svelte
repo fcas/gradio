@@ -1,16 +1,16 @@
 <script lang="ts">
+	import type { ParamViewerProps, ParamViewerEvents } from "./types";
+	import { Gradio } from "@gradio/utils";
 	import ParamViewer from "./ParamViewer.svelte";
 
-	export let value: Record<
-		string,
-		{
-			type: string;
-			description: string;
-			default: string;
-		}
-	>;
-
-	export let linkify: string[] = [];
+	const props = $props();
+	const gradio = new Gradio<ParamViewerEvents, ParamViewerProps>(props);
 </script>
 
-<ParamViewer docs={value} {linkify} />
+<ParamViewer
+	docs={gradio.props.value}
+	linkify={gradio.props.linkify}
+	header={gradio.props.header}
+	anchor_links={gradio.props.anchor_links}
+	max_height={gradio.props.max_height}
+/>

@@ -7,74 +7,44 @@ import pathlib
 import secrets
 import shutil
 from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, List, Optional, Tuple, Union
+from typing import (
+    Annotated,
+    Any,
+    Literal,
+    NewType,
+    Union,
+)
 
 from fastapi import Request
-from gradio_client.utils import traverse
+from gradio_client.data_classes import ParameterInfo
+from gradio_client.documentation import document
+from gradio_client.utils import is_file_obj_with_meta, traverse
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    GetCoreSchemaHandler,
+    GetJsonSchemaHandler,
+    RootModel,
+    ValidationError,
+    ValidationInfo,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import core_schema
+from typing_extensions import NotRequired, TypedDict
 
-from . import wasm_utils
+from gradio.i18n import I18nData
 
-if not wasm_utils.IS_WASM or TYPE_CHECKING:
-    from pydantic import BaseModel, JsonValue, RootModel, ValidationError
-else:
-    # XXX: Currently Pyodide V2 is not available on Pyodide,
-    # so we install V1 for the Wasm version.
-    from typing import Generic, TypeVar
+try:
+    from pydantic import JsonValue
+except ImportError:
+    JsonValue = Any  # type: ignore
 
-    from pydantic import BaseModel as BaseModelV1
-    from pydantic import ValidationError, schema_of
-
-    JsonValue = Any
-
-    # Map V2 method calls to V1 implementations.
-    # Ref: https://docs.pydantic.dev/latest/migration/#changes-to-pydanticbasemodel
-    class BaseModelMeta(type(BaseModelV1)):
-        def __new__(cls, name, bases, dct):
-            # Override `dct` to dynamically create a `Config` class based on `model_config`.
-            if "model_config" in dct:
-                config_class = type("Config", (), {})
-                for key, value in dct["model_config"].items():
-                    setattr(config_class, key, value)
-                dct["Config"] = config_class
-                del dct["model_config"]
-
-            model_class = super().__new__(cls, name, bases, dct)
-            return model_class
-
-    class BaseModel(BaseModelV1, metaclass=BaseModelMeta):
-        pass
-
-    BaseModel.model_dump = BaseModel.dict  # type: ignore
-    BaseModel.model_json_schema = BaseModel.schema  # type: ignore
-
-    # RootModel is not available in V1, so we create a dummy class.
-    PydanticUndefined = object()
-    RootModelRootType = TypeVar("RootModelRootType")
-
-    class RootModel(BaseModel, Generic[RootModelRootType]):
-        root: RootModelRootType
-
-        def __init__(self, root: RootModelRootType = PydanticUndefined, **data):
-            if data:
-                if root is not PydanticUndefined:
-                    raise ValueError(
-                        '"RootModel.__init__" accepts either a single positional argument or arbitrary keyword arguments'
-                    )
-                root = data  # type: ignore
-            # XXX: No runtime validation is executed.
-            super().__init__(root=root)  # type: ignore
-
-        def dict(self, **kwargs):
-            return super().dict(**kwargs)["root"]
-
-        @classmethod
-        def schema(cls, **_kwargs):
-            # XXX: kwargs are ignored.
-            return schema_of(cls.__fields__["root"].type_)  # type: ignore
-
-    RootModel.model_dump = RootModel.dict  # type: ignore
-    RootModel.model_json_schema = RootModel.schema  # type: ignore
+DeveloperPath = NewType("DeveloperPath", str)
+UserProvidedPath = NewType("UserProvidedPath", str)
 
 
 class CancelBody(BaseModel):
@@ -84,30 +54,92 @@ class CancelBody(BaseModel):
 
 
 class SimplePredictBody(BaseModel):
-    data: List[Any]
-    session_hash: Optional[str] = None
+    data: list[Any]
+    session_hash: str | None = None
+    oauth_token: str | None = None
+
+
+class SimplePredictBodyV2(BaseModel):
+    data: dict[str, Any]
+    session_hash: str | None = None
+
+
+class _StarletteRequestPydanticAnnotation:
+    @classmethod
+    def __get_pydantic_core_schema__(
+        cls,
+        _source_type: Any,
+        _handler: GetCoreSchemaHandler,
+    ) -> core_schema.CoreSchema:
+        def validate_request(value: Any) -> Request:
+            if isinstance(value, Request):
+                return value
+            raise ValueError("Input must be a Starlette Request object")
+
+        return core_schema.no_info_plain_validator_function(validate_request)
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, _core_schema: core_schema.CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        return {"type": "object", "title": "StarletteRequest"}
+
+
+PydanticStarletteRequest = Annotated[Request, _StarletteRequestPydanticAnnotation]
 
 
 class PredictBody(BaseModel):
-    model_config = {"arbitrary_types_allowed": True}
-
-    session_hash: Optional[str] = None
-    event_id: Optional[str] = None
-    data: List[Any]
-    event_data: Optional[Any] = None
-    fn_index: Optional[int] = None
-    trigger_id: Optional[int] = None
+    session_hash: str | None = None
+    event_id: str | None = None
+    data: list[Any]
+    # Secret: a caller-supplied token for endpoints that take a gr.OAuthToken.
+    oauth_token: str | None = None
+    event_data: Any | None = None
+    fn_index: int | None = None
+    trigger_id: int | None = None
     simple_format: bool = False
-    batched: Optional[bool] = (
+    batched: bool | None = (
         False  # Whether the data is a batch of samples (i.e. called from the queue if batch=True) or a single sample (i.e. called from the UI)
     )
-    request: Optional[Request] = (
+
+    @classmethod
+    def __get_pydantic_json_schema__(cls, core_schema, handler):
+        return {
+            "title": "PredictBody",
+            "type": "object",
+            "properties": {
+                "session_hash": {"type": "string"},
+                "event_id": {"type": "string"},
+                "data": {"type": "array", "items": {"type": "object"}},
+                "oauth_token": {"type": "string"},
+                "event_data": {"type": "object"},
+                "fn_index": {"type": "integer"},
+                "trigger_id": {"type": "integer"},
+                "simple_format": {"type": "boolean"},
+                "batched": {"type": "boolean"},
+            },
+            "required": ["data"],
+        }
+
+
+class PredictBodyInternal(PredictBody):
+    "Separate class to avoid exposing PydanticStarletteRequest in the API validation"
+
+    request: PydanticStarletteRequest | None = (
         None  # dictionary of request headers, query parameters, url, etc. (used to to pass in request for queuing)
     )
 
 
 class ResetBody(BaseModel):
     event_id: str
+
+
+class VibeEditBody(BaseModel):
+    prompt: str
+
+
+class VibeCodeBody(BaseModel):
+    code: str
 
 
 class ComponentServerJSONBody(BaseModel):
@@ -119,7 +151,7 @@ class ComponentServerJSONBody(BaseModel):
 
 class DataWithFiles(BaseModel):
     data: Any
-    files: List[Tuple[str, bytes]]
+    files: list[tuple[str, bytes]]
 
 
 class ComponentServerBlobBody(BaseModel):
@@ -144,9 +176,9 @@ class GradioBaseModel(ABC):
 
         # TODO: Making sure path is unique should be done in caller
         def unique_copy(obj: dict):
-            data = FileData(**obj)
+            data = FileData(**obj)  # type: ignore
             return data._copy_to_dir(
-                str(pathlib.Path(dir / secrets.token_hex(10)))
+                str(pathlib.Path(dir) / secrets.token_hex(10))
             ).model_dump()
 
         return self.__class__.from_json(
@@ -184,17 +216,64 @@ class GradioRootModel(GradioBaseModel, RootModel):
 GradioDataModel = Union[GradioModel, GradioRootModel]
 
 
-class FileData(GradioModel):
+class FileDataDict(TypedDict):
     path: str  # server filepath
-    url: Optional[str] = None  # normalised server url
-    size: Optional[int] = None  # size in bytes
-    orig_name: Optional[str] = None  # original filename
-    mime_type: Optional[str] = None
+    url: NotRequired[str | None]  # normalised server url
+    size: NotRequired[int | None]  # size in bytes
+    orig_name: NotRequired[str | None]  # original filename
+    mime_type: NotRequired[str | None]
+    is_stream: bool
+    meta: NotRequired[dict]
+
+
+class FileDataMeta(TypedDict):
+    _type: Literal["gradio.FileData"]
+
+
+@document()
+class FileData(GradioModel):
+    """
+    The FileData class is a subclass of the GradioModel class that represents a file object within a Gradio interface. It is used to store file data and metadata when a file is uploaded.
+
+    Attributes:
+        path: The server file path where the file is stored.
+        url: The normalized server URL pointing to the file.
+        size: The size of the file in bytes.
+        orig_name: The original filename before upload.
+        mime_type: The MIME type of the file.
+        is_stream: Indicates whether the file is a stream.
+        meta: Additional metadata used internally (should not be changed).
+    """
+
+    path: str  # server filepath
+    url: str | None = None  # normalised server url
+    size: int | None = None  # size in bytes
+    orig_name: str | None = None  # original filename
+    mime_type: str | None = None
     is_stream: bool = False
-    meta: dict = {"_type": "gradio.FileData"}
+    meta: FileDataMeta = Field(default_factory=lambda: {"_type": "gradio.FileData"})
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_model(cls, v, info: ValidationInfo):
+        if (
+            info.context
+            and info.context.get("validate_meta")
+            and not is_file_obj_with_meta(v)
+        ):
+            raise ValueError(
+                "The 'meta' field must be explicitly provided in the input data and be equal to {'_type': 'gradio.FileData'}."
+            )
+        return v
 
     @property
-    def is_none(self):
+    def is_none(self) -> bool:
+        """
+        Checks if the FileData object is empty, i.e., all attributes are None.
+
+        Returns:
+            bool: True if all attributes (except 'is_stream' and 'meta') are None, False otherwise.
+        """
         return all(
             f is None
             for f in [
@@ -208,9 +287,30 @@ class FileData(GradioModel):
 
     @classmethod
     def from_path(cls, path: str) -> FileData:
+        """
+        Creates a FileData object from a given file path.
+
+        Args:
+            path: The file path.
+
+        Returns:
+            FileData: An instance of FileData representing the file at the specified path.
+        """
         return cls(path=path)
 
     def _copy_to_dir(self, dir: str) -> FileData:
+        """
+        Copies the file to a specified directory and returns a new FileData object representing the copied file.
+
+        Args:
+            dir: The destination directory.
+
+        Returns:
+            FileData: A new FileData object representing the copied file.
+
+        Raises:
+            ValueError: If the source file path is not set.
+        """
         pathlib.Path(dir).mkdir(exist_ok=True)
         new_obj = dict(self)
 
@@ -221,22 +321,31 @@ class FileData(GradioModel):
         return self.__class__(**new_obj)
 
     @classmethod
-    def is_file_data(cls, obj: Any):
+    def is_file_data(cls, obj: Any) -> bool:
+        """
+        Checks if an object is a valid FileData instance.
+
+        Args:
+            obj: The object to check.
+
+        Returns:
+            bool: True if the object is a valid FileData instance, False otherwise.
+        """
         if isinstance(obj, dict):
             try:
-                return not FileData(**obj).is_none
+                return not FileData(**obj).is_none  # type: ignore
             except (TypeError, ValidationError):
                 return False
         return False
 
 
 class ListFiles(GradioRootModel):
-    root: List[FileData]
+    root: list[FileData]
 
     def __getitem__(self, index):
         return self.root[index]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[FileData]:  # type: ignore[override]
         return iter(self.root)
 
 
@@ -254,3 +363,110 @@ class _StaticFiles:
     @classmethod
     def clear(cls):
         cls.all_paths = []
+
+
+class BodyCSS(TypedDict):
+    body_background_fill: str
+    body_text_color: str
+    body_background_fill_dark: str
+    body_text_color_dark: str
+
+
+class Layout(TypedDict):
+    id: int
+    children: NotRequired[list[int | Layout]]
+
+
+class Page(TypedDict):
+    components: list[int]
+    dependencies: list[int]
+    layout: Layout
+
+
+class BlocksConfigDict(TypedDict):
+    version: str
+    deep_link_state: NotRequired[Literal["valid", "invalid", "none"]]
+    mode: str
+    app_id: int
+    dev_mode: bool
+    vibe_mode: bool
+    analytics_enabled: bool
+    components: list[dict[str, Any]]
+    css: str | None
+    connect_heartbeat: bool
+    js: str | Literal[True] | None
+    head: str | None
+    title: str | I18nData
+    space_id: str | None
+    enable_queue: bool
+    show_error: bool
+    is_colab: bool
+    max_file_size: int | None
+    stylesheets: list[str]
+    theme: str | None
+    protocol: Literal["ws", "sse", "sse_v1", "sse_v2", "sse_v2.1", "sse_v3"]
+    body_css: BodyCSS
+    fill_height: bool
+    fill_width: bool
+    theme_hash: str
+    layout: NotRequired[Layout]
+    dependencies: NotRequired[list[dict[str, Any]]]
+    root: NotRequired[str | None]
+    username: NotRequired[str | None]
+    api_prefix: str
+    pwa: NotRequired[bool]
+    page: dict[str, Page]
+    pages: list[tuple[str, str]]
+    current_page: NotRequired[str]
+    i18n_translations: NotRequired[dict[str, dict[str, str]] | None]
+    mcp_server: NotRequired[bool]
+    footer_links: list[str | dict[str, str]]
+    run_history: NotRequired[bool]
+
+
+class MediaStreamChunk(TypedDict):
+    data: bytes
+    duration: float
+    extension: str
+    id: NotRequired[str]
+
+
+class ImageData(GradioModel):
+    path: str | None = Field(default=None, description="Path to a local file")
+    url: str | None = Field(
+        default=None, description="Publicly available url or base64 encoded image"
+    )
+    size: int | None = Field(default=None, description="Size of image in bytes")
+    orig_name: str | None = Field(default=None, description="Original filename")
+    mime_type: str | None = Field(default=None, description="mime type of image")
+    is_stream: bool = Field(default=False, description="Can always be set to False")
+    meta: dict = {"_type": "gradio.FileData"}
+
+    model_config = ConfigDict(
+        json_schema_extra={"description": "A local filepath or publicly available URL."}
+    )
+
+
+class Base64ImageData(GradioModel):
+    url: str = Field(description="base64 encoded image")
+
+
+class APIReturnInfo(TypedDict):
+    label: str
+    type: dict[str, Any]
+    python_type: dict[str, str]
+    component: str
+
+
+class APIEndpointInfo(TypedDict):
+    description: NotRequired[str]
+    parameters: list[ParameterInfo]
+    returns: list[APIReturnInfo]
+    api_visibility: Literal["public", "private", "undocumented"]
+    # Set only when the function takes a gr.OAuthToken.
+    oauth_token: NotRequired[Literal["required", "optional"]]
+
+
+class APIInfo(TypedDict):
+    named_endpoints: dict[str, APIEndpointInfo]
+    unnamed_endpoints: dict[str, APIEndpointInfo]

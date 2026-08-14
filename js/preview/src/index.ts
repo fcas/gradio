@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import * as net from "net";
 
-import { create_server } from "./dev";
+import { create_server, type ComponentConfig } from "./dev";
 import { make_build } from "./build";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -52,12 +52,11 @@ async function run(): Promise<void> {
 			...parsed_args
 		};
 		process.env.GRADIO_BACKEND_PORT = backend_port.toString();
-
 		const _process = spawn(
 			parsed_args["gradio-path"],
 			[parsed_args.app, "--watch-dirs", options.component_dir],
 			{
-				shell: true,
+				shell: false,
 				stdio: "pipe",
 				cwd: process.cwd(),
 				env: {
@@ -129,6 +128,12 @@ export async function find_free_ports(
 export function is_free_port(port: number): Promise<boolean> {
 	return new Promise((accept, reject) => {
 		const sock = net.createConnection(port, "127.0.0.1");
+		setTimeout(() => {
+			sock.destroy();
+			reject(
+				new Error(`Timeout while detecting free port with 127.0.0.1:${port} `)
+			);
+		}, 3000);
 		sock.once("connect", () => {
 			sock.end();
 			accept(false);

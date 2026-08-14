@@ -1,8 +1,10 @@
 <script lang="ts">
 	import "@gradio/theme";
-	import "../../../app/test/mocks/theme.css";
-	// import { page } from "$app/stores";
+	import "../styles.css";
+	// import "../../../app/test/mocks/theme.css";
+	// import { page } from "$app/state";
 	// import { afterNavigate } from "$app";
+	import "../lib/theme.css";
 
 	const links = [
 		["/embeds", "Embeds"],
@@ -10,7 +12,10 @@
 		["/client-node", "Client-Node"]
 	];
 
-	// $: afterNavigate(() => (location.hash = $page.url.pathname.replace("/", "")));
+	// $: afterNavigate(() => (location.hash = page.url.pathname.replace("/", "")));
+	import type { Snippet } from "svelte";
+
+	let { children }: { children?: Snippet } = $props();
 </script>
 
 <svelte:head>
@@ -30,27 +35,32 @@
 	/>
 </svelte:head>
 
-<div class="prose">
-	<h1><span style="color: var(--color-accent);">Gradio</span> Test Space</h1>
+<div>
 	<ul>
 		{#each links as [url, name]}
-			<!-- <li><a href={url} class:active={url === $page.route.id}>{name}</a></li> -->
+			<li><a href={url}>{name}</a></li>
 		{/each}
 	</ul>
-	<slot />
+	{@render children?.()}
 </div>
 
 <style>
 	div {
 		margin: auto;
 		width: 100%;
-		max-width: 800px;
+		display: flex;
+		flex-direction: column;
+
+		min-height: 100dvh;
 	}
 
 	ul {
 		display: flex;
+		justify-content: center;
+		align-items: center;
 		gap: var(--spacing-xxl);
 		list-style: none;
+		height: 55px;
 	}
 
 	a {

@@ -1,187 +1,203 @@
 <script lang="ts">
 	import DropdownOptions from "./DropdownOptions.svelte";
-	import { createEventDispatcher, afterUpdate } from "svelte";
-	import { BlockTitle } from "@gradio/atoms";
+	import { BlockTitle, IconButtonWrapper } from "@gradio/atoms";
 	import { DropdownArrow } from "@gradio/icons";
-	import type { SelectData, KeyUpData } from "@gradio/utils";
-	import { handle_filter, handle_change, handle_shared_keys } from "./utils";
+	import { handle_filter, handle_shared_keys } from "./utils";
+	import {
+		type SelectData,
+		type KeyUpData,
+		type CustomButton as CustomButtonType
+	} from "@gradio/utils";
+	import { tick } from "svelte";
 
-	export let label: string;
-	export let info: string | undefined = undefined;
-	export let value: string | number | (string | number)[] | undefined = [];
-	let old_value: string | number | (string | number)[] | undefined = [];
-	export let value_is_output = false;
-	export let choices: [string, string | number][];
-	let old_choices: [string, string | number][];
-	export let disabled = false;
-	export let show_label: boolean;
-	export let container = true;
-	export let allow_custom_value = false;
-	export let filterable = true;
+	const is_browser = typeof window !== "undefined";
+
+	let {
+		label = "Dropdown",
+		info = undefined,
+		value = $bindable<string | number | null>(),
+		choices = [],
+		interactive = true,
+		show_label = true,
+		container = true,
+		allow_custom_value = false,
+		filterable = true,
+		buttons = null,
+		oncustom_button_click = null,
+		on_change,
+		on_input,
+		on_select,
+		on_focus,
+		on_blur,
+		on_key_up
+	}: {
+		label?: string;
+		info?: string;
+		value?: string | number | null;
+		choices?: [string, string | number][];
+		interactive?: boolean;
+		show_label?: boolean;
+		container?: boolean;
+		allow_custom_value?: boolean;
+		filterable?: boolean;
+		buttons?: (string | CustomButtonType)[] | null;
+		oncustom_button_click?: ((id: number) => void) | null;
+		on_change?: (value: string | number | null) => void;
+		on_input?: () => void;
+		on_select?: (data: SelectData) => void;
+		on_focus?: () => void;
+		on_blur?: () => void;
+		on_key_up?: (data: KeyUpData) => void;
+	} = $props();
 
 	let filter_input: HTMLElement;
 
-	let show_options = false;
-	let choices_names: string[];
-	let choices_values: (string | number)[];
-	let input_text = "";
-	let old_input_text = "";
-	let initialized = false;
+	const uid = $props.id();
+	const listbox_id = `${uid}-options`;
+
+	let show_options = $derived.by(() => {
+		return is_browser && filter_input === document.activeElement;
+	});
+	let choices_names = $derived(choices.map((c) => c[0]));
+	let choices_values = $derived(choices.map((c) => c[1]));
+	let input_text = $state("");
+	let selected_index: number | null = $state(null);
+	// Use last_typed_value to track when the user has typed
+	// on_blur we only want to update value if the user has typed
+	let last_typed_value = input_text;
+	let focused = $state(false);
+
+	$effect(() => {
+		const current_value = value;
+		const values = choices_values;
+		const names = choices_names;
+		if (focused) {
+			return;
+		}
+		if (
+			current_value === undefined ||
+			current_value === null ||
+			(Array.isArray(current_value) && current_value.length === 0)
+		) {
+			input_text = "";
+			selected_index = null;
+		} else if (values.includes(current_value as string | number)) {
+			input_text = names[values.indexOf(current_value as string | number)];
+			selected_index = values.indexOf(current_value as string | number);
+		} else if (allow_custom_value) {
+			input_text = current_value as string;
+			selected_index = null;
+		} else {
+			input_text = "";
+			selected_index = null;
+		}
+		last_typed_value = input_text;
+	});
+	let initialized = $state(false);
+	let disabled = $derived(!interactive);
 
 	// All of these are indices with respect to the choices array
-	let filtered_indices: number[] = [];
-	let active_index: number | null = null;
-	// selected_index is null if allow_custom_value is true and the input_text is not in choices_names
-	let selected_index: number | null = null;
-	let old_selected_index: number | null;
+	let filtered_indices = $state(choices.map((_, i) => i));
+	let active_index: number | null = $state(null);
+	let selected_indices = $derived(
+		selected_index === null ? [] : [selected_index]
+	);
 
-	const dispatch = createEventDispatcher<{
-		change: string | undefined;
-		input: undefined;
-		select: SelectData;
-		blur: undefined;
-		focus: undefined;
-		key_up: KeyUpData;
-	}>();
+	$effect(() => {
+		choices;
+		filtered_indices = choices.map((_, i) => i);
+	});
 
-	// Setting the initial value of the dropdown
-	if (value) {
-		old_selected_index = choices.map((c) => c[1]).indexOf(value as string);
-		selected_index = old_selected_index;
-		if (selected_index === -1) {
-			old_value = value;
-			selected_index = null;
-		} else {
-			[input_text, old_value] = choices[selected_index];
-			old_input_text = input_text;
-		}
-		set_input_text();
-	} else if (choices.length > 0) {
-		old_selected_index = 0;
-		selected_index = 0;
-		[input_text, value] = choices[selected_index];
-		old_value = value;
-		old_input_text = input_text;
-	}
-
-	$: {
-		if (
-			selected_index !== old_selected_index &&
-			selected_index !== null &&
-			initialized
-		) {
-			[input_text, value] = choices[selected_index];
-			old_selected_index = selected_index;
-			dispatch("select", {
-				index: selected_index,
-				value: choices_values[selected_index],
-				selected: true
-			});
-		}
-	}
-
-	$: {
-		if (value != old_value) {
-			set_input_text();
-			handle_change(dispatch, value, value_is_output);
-			old_value = value;
-		}
-	}
-
-	function set_choice_names_values(): void {
-		choices_names = choices.map((c) => c[0]);
-		choices_values = choices.map((c) => c[1]);
-	}
-
-	$: choices, set_choice_names_values();
-
-	$: {
-		if (choices !== old_choices) {
-			if (!allow_custom_value) {
-				set_input_text();
-			}
-			old_choices = choices;
-			filtered_indices = handle_filter(choices, input_text);
-			if (!allow_custom_value && filtered_indices.length > 0) {
-				active_index = filtered_indices[0];
-			}
-			if (filter_input == document.activeElement) {
-				show_options = true;
-			}
-		}
-	}
-
-	$: {
-		if (input_text !== old_input_text) {
-			filtered_indices = handle_filter(choices, input_text);
-			old_input_text = input_text;
-			if (!allow_custom_value && filtered_indices.length > 0) {
-				active_index = filtered_indices[0];
-			}
-		}
-	}
-
-	function set_input_text(): void {
-		set_choice_names_values();
-		if (value === undefined || (Array.isArray(value) && value.length === 0)) {
-			input_text = "";
-			selected_index = null;
-		} else if (choices_values.includes(value as string)) {
-			input_text = choices_names[choices_values.indexOf(value as string)];
-			selected_index = choices_values.indexOf(value as string);
-		} else if (allow_custom_value) {
-			input_text = value as string;
-			selected_index = null;
-		} else {
-			input_text = "";
-			selected_index = null;
-		}
-		old_selected_index = selected_index;
-	}
-
-	function handle_option_selected(e: any): void {
-		selected_index = parseInt(e.detail.target.dataset.index);
+	function handle_option_selected(index: any): void {
+		selected_index = parseInt(index);
 		if (isNaN(selected_index)) {
 			// This is the case when the user clicks on the scrollbar
 			selected_index = null;
 			return;
 		}
+
+		let [_input_text, _value] = choices[selected_index];
+		input_text = _input_text;
+		last_typed_value = input_text;
+		value = _value;
+		on_select?.({
+			index: selected_index,
+			value: choices_values[selected_index],
+			selected: true
+		});
 		show_options = false;
 		active_index = null;
+		on_input?.();
 		filter_input.blur();
 	}
 
 	function handle_focus(e: FocusEvent): void {
+		focused = true;
 		filtered_indices = choices.map((_, i) => i);
+		active_index = selected_index;
 		show_options = true;
-		dispatch("focus");
+		on_focus?.();
 	}
 
 	function handle_blur(): void {
 		if (!allow_custom_value) {
-			input_text = choices_names[choices_values.indexOf(value as string)];
-		} else {
-			value = input_text;
+			input_text =
+				choices_names[choices_values.indexOf(value as string | number)];
+		} else if (input_text !== last_typed_value) {
+			if (choices_names.includes(input_text)) {
+				selected_index = choices_names.indexOf(input_text);
+				value = choices_values[selected_index];
+			} else {
+				value = input_text;
+				selected_index = null;
+			}
 		}
 		show_options = false;
 		active_index = null;
-		dispatch("blur");
+		filtered_indices = choices.map((_, i) => i);
+		focused = false;
+		on_blur?.();
+		on_input?.();
 	}
 
-	function handle_key_down(e: KeyboardEvent): void {
+	async function handle_key_down(e: KeyboardEvent): Promise<void> {
+		await tick();
+		const is_navigation_key =
+			e.key === "ArrowUp" ||
+			e.key === "ArrowDown" ||
+			e.key === "Enter" ||
+			e.key === "Escape";
+		const is_filtering = input_text !== last_typed_value;
+		if (!is_navigation_key) {
+			filtered_indices = handle_filter(choices, input_text);
+			active_index = filtered_indices.length > 0 ? filtered_indices[0] : null;
+		} else {
+			// Recompute the visible options so navigation always spans the full
+			// current list. Filter by the typed text when the user is filtering,
+			// otherwise (a value is just displayed/selected) show every option.
+			filtered_indices = is_filtering
+				? handle_filter(choices, input_text)
+				: choices.map((_, i) => i);
+			if (active_index !== null && !filtered_indices.includes(active_index)) {
+				active_index = filtered_indices.length > 0 ? filtered_indices[0] : null;
+			}
+		}
 		[show_options, active_index] = handle_shared_keys(
 			e,
 			active_index,
 			filtered_indices
 		);
 		if (e.key === "Enter") {
+			last_typed_value = input_text;
 			if (active_index !== null) {
 				selected_index = active_index;
+				value = choices_values[active_index];
 				show_options = false;
 				filter_input.blur();
 				active_index = null;
 			} else if (choices_names.includes(input_text)) {
 				selected_index = choices_names.indexOf(input_text);
+				value = choices_values[selected_index];
 				show_options = false;
 				active_index = null;
 				filter_input.blur();
@@ -195,38 +211,52 @@
 		}
 	}
 
-	afterUpdate(() => {
-		value_is_output = false;
-		initialized = true;
+	let old_value = $state(value);
+	$effect(() => {
+		if (old_value !== value) {
+			old_value = value;
+			on_change?.(value);
+		}
 	});
 </script>
 
 <div class:container>
+	{#if show_label && buttons && buttons.length > 0}
+		<IconButtonWrapper
+			{buttons}
+			on_custom_button_click={oncustom_button_click}
+		/>
+	{/if}
 	<BlockTitle {show_label} {info}>{label}</BlockTitle>
 
 	<div class="wrap">
 		<div class="wrap-inner" class:show_options>
 			<div class="secondary-wrap">
 				<input
-					role="listbox"
-					aria-controls="dropdown-options"
+					role="combobox"
+					aria-controls={listbox_id}
 					aria-expanded={show_options}
+					aria-activedescendant={show_options && active_index !== null
+						? `${listbox_id}-option-${active_index}`
+						: undefined}
+					aria-autocomplete={filterable ? "list" : "none"}
 					aria-label={label}
 					class="border-none"
 					class:subdued={!choices_names.includes(input_text) &&
 						!allow_custom_value}
-					{disabled}
 					autocomplete="off"
+					{disabled}
 					bind:value={input_text}
 					bind:this={filter_input}
-					on:keydown={handle_key_down}
-					on:keyup={(e) =>
-						dispatch("key_up", {
+					onkeydown={handle_key_down}
+					onkeyup={(e) => {
+						on_key_up?.({
 							key: e.key,
 							input_value: input_text
-						})}
-					on:blur={handle_blur}
-					on:focus={handle_focus}
+						});
+					}}
+					onblur={handle_blur}
+					onfocus={handle_focus}
 					readonly={!filterable}
 				/>
 				{#if !disabled}
@@ -241,9 +271,11 @@
 			{choices}
 			{filtered_indices}
 			{disabled}
-			selected_indices={selected_index === null ? [] : [selected_index]}
+			{selected_indices}
 			{active_index}
-			on:change={handle_option_selected}
+			{listbox_id}
+			onchange={handle_option_selected}
+			onload={() => (initialized = true)}
 		/>
 	</div>
 </div>
@@ -275,6 +307,7 @@
 	.wrap:focus-within {
 		box-shadow: var(--input-shadow-focus);
 		border-color: var(--input-border-color-focus);
+		background: var(--input-background-fill-focus);
 	}
 
 	.wrap-inner {

@@ -3,21 +3,36 @@
 from __future__ import annotations
 
 import json
-import time
-import warnings
-from typing import Literal
+from collections.abc import Sequence
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 from gradio_client.documentation import document
 
-from gradio.components import Button
-from gradio.context import Context
+from gradio import oauth, utils
+from gradio.components import Button, Component
+from gradio.context import get_blocks_context
 from gradio.routes import Request
+
+if TYPE_CHECKING:
+    from gradio.components import Timer
 
 
 @document()
 class LoginButton(Button):
     """
-    Creates a button that redirects the user to Sign with Hugging Face using OAuth.
+    Creates a "Sign In" button that redirects the user to sign in with Hugging Face OAuth.
+    Once the user is signed in, the button will act as a logout button, and you can
+    retrieve a signed-in user's profile by adding a parameter of type `gr.OAuthProfile`
+    to any Gradio function. This will only work if this Gradio app is running in a
+    Hugging Face Space. Permissions for the OAuth app can be configured in the Spaces
+    README file, as described here: https://huggingface.co/docs/hub/en/spaces-oauth.
+    For local development, instead of OAuth, the local Hugging Face account that is
+    logged in (via `hf auth login`) will be available through the `gr.OAuthProfile`
+    object.
+
+    Demos: login_with_huggingface
+    Guides: sharing-your-app
     """
 
     is_template = True
@@ -27,53 +42,49 @@ class LoginButton(Button):
         value: str = "Sign in with Hugging Face",
         logout_value: str = "Logout ({})",
         *,
-        every: float | None = None,
-        variant: Literal["primary", "secondary", "stop"] = "secondary",
-        size: Literal["sm", "lg"] | None = None,
-        icon: str
-        | None = "https://huggingface.co/front/assets/huggingface_logo-noborder.svg",
+        every: Timer | float | None = None,
+        inputs: Component | Sequence[Component] | set[Component] | None = None,
+        variant: Literal["primary", "secondary", "stop", "huggingface"] = "huggingface",
+        size: Literal["sm", "md", "lg"] = "lg",
+        icon: str | Path | None = utils.get_icon_path("huggingface-logo.svg"),
         link: str | None = None,
-        visible: bool = True,
+        link_target: Literal["_self", "_blank", "_parent", "_top"] = "_self",
+        visible: bool | Literal["hidden"] = True,
         interactive: bool = True,
         elem_id: str | None = None,
         elem_classes: list[str] | str | None = None,
         render: bool = True,
-        key: int | str | None = None,
-        scale: int | None = 0,
+        key: int | str | tuple[int | str, ...] | None = None,
+        preserved_by_key: list[str] | str | None = "value",
+        scale: int | None = None,
         min_width: int | None = None,
-        signed_in_value: str = "Signed in as {}",
     ):
         """
         Parameters:
             logout_value: The text to display when the user is signed in. The string should contain a placeholder for the username with a call-to-action to logout, e.g. "Logout ({})".
         """
-        if signed_in_value != "Signed in as {}":
-            warnings.warn(
-                "The `signed_in_value` parameter is deprecated. Please use `logout_value` instead."
-            )
         self.logout_value = logout_value
         super().__init__(
             value,
             every=every,
+            inputs=inputs,
             variant=variant,
             size=size,
             icon=icon,
             link=link,
+            link_target=link_target,
             visible=visible,
             interactive=interactive,
             elem_id=elem_id,
             elem_classes=elem_classes,
             render=render,
             key=key,
+            preserved_by_key=preserved_by_key,
             scale=scale,
             min_width=min_width,
         )
-        if Context.root_block:
+        if get_blocks_context():
             self.activate()
-        else:
-            warnings.warn(
-                "LoginButton created outside of a Blocks context. May not work unless you call its `activate()` method manually."
-            )
 
     def activate(self):
         # Taken from https://cmgdo.com/external-link-in-gradio-button/
@@ -81,7 +92,7 @@ class LoginButton(Button):
         # ('self' value will be either "Sign in with Hugging Face" or "Signed in as ...")
         _js = _js_handle_redirect.replace(
             "BUTTON_DEFAULT_VALUE", json.dumps(self.value)
-        )
+        ).replace("REDIRECT_URL", self.page)
         self.click(fn=None, inputs=[self], outputs=None, js=_js)
 
         self.attach_load_event(self._check_login_status, None)
@@ -92,15 +103,13 @@ class LoginButton(Button):
             request.request, "session", None
         )
 
-        if session is None or "oauth_info" not in session:
+        if session is None:
             # Cookie set but user not logged in
             return LoginButton(self.value, interactive=True)
 
-        oauth_info = session["oauth_info"]
-        expires_at = oauth_info.get("expires_at")
-        if expires_at is not None and expires_at < time.time():
-            # User is logged in but token has expired => logout
-            session.pop("oauth_info", None)
+        oauth_info = oauth._get_valid_oauth_info_from_session(session)
+        if oauth_info is None:
+            # Cookie set but user not logged in
             return LoginButton(self.value, interactive=True)
 
         # User is correctly logged in
@@ -113,7 +122,7 @@ class LoginButton(Button):
 # on the same tab.
 _js_handle_redirect = """
 (buttonValue) => {
-    uri = buttonValue === BUTTON_DEFAULT_VALUE ? '/login/huggingface' : '/logout';
+    uri = buttonValue === BUTTON_DEFAULT_VALUE ? '/login/huggingface?_target_url=/REDIRECT_URL' : '/logout?_target_url=/REDIRECT_URL';
     window.parent?.postMessage({ type: "SET_SCROLLING", enabled: true }, "*");
     setTimeout(() => {
         window.location.assign(uri + window.location.search);

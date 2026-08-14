@@ -1,6 +1,16 @@
-import type { Config } from "../types";
-import { CONFIG_ERROR_MSG, CONFIG_URL } from "../constants";
+import type { ClientOptions, Config } from "../types";
+import {
+	CONFIG_ERROR_MSG,
+	CONFIG_URL,
+	INVALID_CREDENTIALS_MSG,
+	LOGIN_URL,
+	MISSING_CREDENTIALS_MSG,
+	PRIVATE_SPACE_MSG,
+	SPACE_METADATA_ERROR_MSG,
+	UNAUTHORIZED_MSG
+} from "../constants";
 import { Client } from "..";
+import { join_urls, process_endpoint } from "./api_info";
 
 /**
  * This function is used to resolve the URL for making requests when the app has a root path.
@@ -25,12 +35,14 @@ export function resolve_root(
 
 export async function get_jwt(
 	space: string,
-	token: `hf_${string}`
+	token: `hf_${string}`,
+	cookies?: string | null
 ): Promise<string | false> {
 	try {
 		const r = await fetch(`https://huggingface.co/api/spaces/${space}/jwt`, {
 			headers: {
-				Authorization: `Bearer ${token}`
+				Authorization: `Bearer ${token}`,
+				...(cookies ? { Cookie: cookies } : {})
 			}
 		});
 
@@ -42,53 +54,210 @@ export async function get_jwt(
 	}
 }
 
+/**
+ * The `hf_token` option was renamed to `token`, but a lot of existing code
+ * (and the Python client) still uses `hf_token`. Accept it as an alias so
+ * that authenticated requests are not silently sent without credentials,
+ * which previously surfaced as "Could not resolve app config" errors when
+ * connecting to private Spaces.
+ */
+export function normalise_token_option(options: ClientOptions): void {
+	if (options.hf_token && !options.token) {
+		options.token = options.hf_token;
+		console.warn(
+			"The `hf_token` option has been renamed to `token`. Support for `hf_token` will be removed in a future version of @gradio/client."
+		);
+	}
+}
+
 export function map_names_to_ids(
 	fns: Config["dependencies"]
 ): Record<string, number> {
 	let apis: Record<string, number> = {};
 
-	fns.forEach(({ api_name }, i: number) => {
-		if (api_name) apis[api_name] = i;
+	fns.forEach(({ api_name, id }) => {
+		if (api_name) apis[api_name] = id;
 	});
 	return apis;
 }
 
+export function resolve_config_root(
+	root: string,
+	current_location: string
+): string {
+	const root_url = new URL(root, current_location);
+	const current_url = new URL(current_location);
+	if (root_url.hostname !== current_url.hostname) {
+		return root;
+	}
+
+	root_url.protocol = current_url.protocol;
+	root_url.host = current_url.host;
+	return root_url.toString().replace(/\/$/, "");
+}
+
 export async function resolve_config(
 	this: Client,
-	endpoint: string
+	endpoint: string,
+	strip_current_page = true
 ): Promise<Config | undefined> {
-	const headers: Record<string, string> = this.options.hf_token
-		? { Authorization: `Bearer ${this.options.hf_token}` }
+	const headers: Record<string, string> = this.options.token
+		? { Authorization: `Bearer ${this.options.token}` }
 		: {};
-
-	headers["Content-Type"] = "application/json";
 
 	if (
 		typeof window !== "undefined" &&
 		window.gradio_config &&
-		location.origin !== "http://localhost:9876" &&
-		!window.gradio_config.dev_mode
+		location.origin !== "http://localhost:9876"
 	) {
-		const path = window.gradio_config.root;
-		const config = window.gradio_config;
-		let config_root = resolve_root(endpoint, config.root, false);
-		config.root = config_root;
-		return { ...config, path } as Config;
+		if (strip_current_page && window.gradio_config.current_page) {
+			endpoint = endpoint.substring(0, endpoint.lastIndexOf("/"));
+		}
+		if (
+			window.gradio_config.dev_mode ||
+			(typeof window !== "undefined" && window?.BUILD_MODE === "dev")
+		) {
+			let config_url = join_urls(
+				endpoint,
+				this.deep_link
+					? CONFIG_URL + "?deep_link=" + this.deep_link
+					: CONFIG_URL
+			);
+			const response = await this.fetch(config_url, {
+				headers,
+				credentials: this.options.credentials ?? "same-origin"
+			});
+			const config = await handleConfigResponse(response, !!this.options.auth);
+			config.root = endpoint || config.root;
+			// @ts-ignore
+			window.gradio_config = {
+				...config,
+				current_page: window.gradio_config.current_page
+			};
+		}
+		// The page was rendered by this Gradio server, so a same-host root may
+		// contain an internal protocol or port supplied by a reverse proxy. Keep
+		// the configured path, but use the browser-visible origin for requests
+		// made by the client itself (queue, upload, reset, etc.).
+		const config = { ...window.gradio_config } as unknown as Config;
+		config.root = resolve_config_root(config.root, location.href);
+		return config;
 	} else if (endpoint) {
-		const response = await this.fetch(`${endpoint}/${CONFIG_URL}`, {
-			headers
+		let config_url = join_urls(
+			endpoint,
+			this.deep_link ? CONFIG_URL + "?deep_link=" + this.deep_link : CONFIG_URL
+		);
+
+		const response = await this.fetch(config_url, {
+			headers,
+			credentials: this.options.credentials ?? "same-origin"
 		});
 
-		if (response?.status === 200) {
-			let config = await response.json();
-			config.path = config.path ?? "";
+		const config = await handleConfigResponse(response, !!this.options.auth);
+		// Preserve the backend-provided root if available (it contains the correct public URL)
+		// Only fall back to endpoint if the backend didn't provide a root
+		if (!config.root) {
 			config.root = endpoint;
-			return config;
 		}
-		throw new Error(CONFIG_ERROR_MSG);
+		return config;
 	}
 
 	throw new Error(CONFIG_ERROR_MSG);
+}
+
+async function handleConfigResponse(
+	response: Response,
+	authorized: boolean
+): Promise<Config> {
+	if (response?.status === 401 && !authorized) {
+		let error_data: any = null;
+		try {
+			error_data = await response.json();
+		} catch (e) {
+			// Unauthenticated requests to private Spaces receive a non-JSON 401
+			// page from the Hugging Face proxy rather than a Gradio auth payload.
+			throw new Error(PRIVATE_SPACE_MSG);
+		}
+		const auth_message = error_data?.detail?.auth_message;
+		throw new Error(auth_message || MISSING_CREDENTIALS_MSG);
+	} else if (response?.status === 401 && authorized) {
+		throw new Error(INVALID_CREDENTIALS_MSG);
+	}
+
+	if (response?.status === 200) {
+		let config = await response.json();
+		config.dependencies?.forEach((dep: any, i: number) => {
+			if (dep.id === undefined) {
+				dep.id = i;
+			}
+		});
+		return config;
+	} else if (response?.status === 401) {
+		throw new Error(UNAUTHORIZED_MSG);
+	}
+
+	throw new Error(
+		`${CONFIG_ERROR_MSG}(received status ${response?.status} when fetching the app config)`
+	);
+}
+
+export async function resolve_cookies(this: Client): Promise<void> {
+	const { http_protocol, host } = await process_endpoint(
+		this.app_reference,
+		this.options.token
+	);
+
+	try {
+		if (this.options.auth) {
+			const cookie_header = await get_cookie_header(
+				http_protocol,
+				host,
+				this.options.auth,
+				this.fetch,
+				this.options.token,
+				this.options.credentials
+			);
+
+			if (cookie_header) this.set_cookies(cookie_header);
+		}
+	} catch (e: unknown) {
+		throw Error((e as Error).message);
+	}
+}
+
+// separating this from client-bound resolve_cookies so that it can be used in duplicate
+export async function get_cookie_header(
+	http_protocol: string,
+	host: string,
+	auth: [string, string],
+	_fetch: typeof fetch,
+	token?: `hf_${string}`,
+	credentials?: RequestCredentials
+): Promise<string | null> {
+	const formData = new FormData();
+	formData.append("username", auth?.[0]);
+	formData.append("password", auth?.[1]);
+
+	let headers: { Authorization?: string } = {};
+
+	if (token) {
+		headers.Authorization = `Bearer ${token}`;
+	}
+
+	const res = await _fetch(`${http_protocol}//${host}/${LOGIN_URL}`, {
+		headers,
+		method: "POST",
+		body: formData,
+		credentials: credentials ?? "same-origin"
+	});
+
+	if (res.status === 200) {
+		return res.headers.get("set-cookie");
+	} else if (res.status === 401) {
+		throw new Error(INVALID_CREDENTIALS_MSG);
+	} else {
+		throw new Error(SPACE_METADATA_ERROR_MSG);
+	}
 }
 
 export function determine_protocol(endpoint: string): {
@@ -97,34 +266,32 @@ export function determine_protocol(endpoint: string): {
 	host: string;
 } {
 	if (endpoint.startsWith("http")) {
-		const { protocol, host } = new URL(endpoint);
+		const { protocol, host, pathname } = new URL(endpoint);
 
-		if (host.endsWith("hf.space")) {
-			return {
-				ws_protocol: "wss",
-				host: host,
-				http_protocol: protocol as "http:" | "https:"
-			};
-		}
 		return {
 			ws_protocol: protocol === "https:" ? "wss" : "ws",
 			http_protocol: protocol as "http:" | "https:",
-			host
-		};
-	} else if (endpoint.startsWith("file:")) {
-		// This case is only expected to be used for the Wasm mode (Gradio-lite),
-		// where users can create a local HTML file using it and open the page in a browser directly via the `file:` protocol.
-		return {
-			ws_protocol: "ws",
-			http_protocol: "http:",
-			host: "lite.local" // Special fake hostname only used for this case. This matches the hostname allowed in `is_self_host()` in `js/wasm/network/host.ts`.
+			host: host + (pathname !== "/" ? pathname : "")
 		};
 	}
 
 	// default to secure if no protocol is provided
+
 	return {
 		ws_protocol: "wss",
 		http_protocol: "https:",
-		host: endpoint
+		host: new URL(endpoint).host
 	};
 }
+
+export const parse_and_set_cookies = (cookie_header: string): string[] => {
+	let cookies: string[] = [];
+	const parts = cookie_header.split(/,(?=\s*[^\s=;]+=[^\s=;]+)/);
+	parts.forEach((cookie) => {
+		const [cookie_name, cookie_value] = cookie.split(";")[0].split("=");
+		if (cookie_name && cookie_value) {
+			cookies.push(`${cookie_name.trim()}=${cookie_value.trim()}`);
+		}
+	});
+	return cookies;
+};

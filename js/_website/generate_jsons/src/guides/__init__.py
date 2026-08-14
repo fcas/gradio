@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import markdown
 
 DIR = os.path.dirname(__file__)
 GUIDES_DIR = os.path.abspath(os.path.join(DIR, "../../../../../guides"))
@@ -16,8 +17,10 @@ for demo_folder in os.listdir(DEMOS_DIR):
     if not os.path.exists(runfile):
         continue
     with open(runfile) as run_py:
-        demos[demo_folder] = run_py.read().replace(
-            'if __name__ == "__main__":\n    demo.launch()', "demo.launch()"
+        demos[demo_folder] = (
+            run_py.read()
+            .replace('if __name__ == "__main__":\n    demo.launch()', "demo.launch()")
+            .replace("# type: ignore", "")
         )
 
 
@@ -28,7 +31,9 @@ def format_name(guide_name):
         guide_name = guide_name[guide_name.index("_") + 1 :]
     if guide_name.lower().endswith(".md"):
         guide_name = guide_name[:-3]
-    pretty_guide_name = " ".join([word[0].upper() + word[1:] for word in guide_name.split("-")])
+    pretty_guide_name = " ".join(
+        [word[0].upper() + word[1:] for word in guide_name.split("-")]
+    )
     return index, guide_name, pretty_guide_name
 
 
@@ -73,7 +78,6 @@ for guide_folder in guide_folders:
         contributor = get_labeled_metadata("Contributed by", is_list=False)
 
         url = f"/guides/{guide_name}/"
-        
         guide_content = re.sub(
             r"\$code_([a-z _\-0-9]+)",
             lambda x: f"```python\n{demos[x.group(1)]}\n```",
@@ -86,8 +90,33 @@ for guide_folder in guide_folders:
         )
 
         guide_content = re.sub(
-            r"(\n\nTip: )(.*?)(?=\n\n|$)", 
-            lambda x: f"<p class='tip'><strong>✍️ Tip:</strong> {x.group(2)}</p>", 
+            r"\n\nTip: (.*?)(?=\n\n|$)",
+            lambda x: f"""
+            <div class='tip'>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/>
+                    <path d="M9 18h6"/>
+                    <path d="M10 22h4"/>
+                </svg>
+                <div>{markdown.markdown(x.group(1))}</div>
+            </div>
+                """,
+            guide_content,
+        )
+
+        guide_content = re.sub(
+            r"(\n\nWarning: )(.*?)(?=\n\n|$)",
+            lambda x: f"""
+            <div class='warning'>
+                <span class="inline-flex" style="align-items: baseline">
+                    <svg class="self-center w-5 h-5 mx-1" xmlns='http://www.w3.org/2000/svg' xmlns:xlink='http://www.w3.org/1999/xlink' fill='currentColor' version='1.1' width='800px' height='800px' viewBox='0 0 554.2 554.199' xml:space='preserve'>
+                        <path d='M538.5,386.199L356.5,70.8c-16.4-28.4-46.7-45.9-79.501-45.9c-32.8,0-63.1,17.5-79.5,45.9L12.3,391.6   c-16.4,28.4-16.4,63.4,0,91.8C28.7,511.8,59,529.3,91.8,529.3H462.2c0.101,0,0.2,0,0.2,0c50.7,0,91.8-41.101,91.8-91.8   C554.2,418.5,548.4,400.8,538.5,386.199z M316.3,416.899c0,21.7-16.7,38.3-39.2,38.3s-39.2-16.6-39.2-38.3V416   c0-21.601,16.7-38.301,39.2-38.301S316.3,394.3,316.3,416V416.899z M317.2,158.7L297.8,328.1c-1.3,12.2-9.4,19.8-20.7,19.8   s-19.4-7.7-20.7-19.8L237,158.6c-1.3-13.1,5.801-23,18-23H299.1C311.3,135.7,318.5,145.6,317.2,158.7z'/>
+                    </svg>
+                <span><strong>Warning:</strong></span>
+                </span>
+                {markdown.markdown(x.group(2))}
+            </div>
+                """,
             guide_content,
         )
 
@@ -100,7 +129,7 @@ for guide_folder in guide_folders:
                 if not any(line.startswith(label) for label in metadata_labels)
             ]
         )
-        
+
         guide_content = re.sub(
             r"```([a-z]+)\n",
             lambda x: f"<div class='codeblock'><pre><code class='lang-{x.group(1)}'>",
@@ -117,8 +146,6 @@ for guide_folder in guide_folders:
             lambda x: f"<gradio-app space='gradio/{x.group(1).replace('_', UNDERSCORE_TOKEN)}' />",
             guide_content,
         )
-        
-
 
         guide_data = {
             "name": guide_name,
@@ -135,7 +162,9 @@ for guide_folder in guide_folders:
         }
         guides.append(guide_data)
         guides_by_category[-1]["guides"].append(guide_data)
-        guide_names[-1]["guides"].append({"name": guide_name, "pretty_name": pretty_guide_name, "url": url})
+        guide_names[-1]["guides"].append(
+            {"name": guide_name, "pretty_name": pretty_guide_name, "url": url}
+        )
         guide_urls.append(guide_name)
         absolute_index += 1
 
@@ -143,19 +172,15 @@ for guide_folder in guide_folders:
 def generate(json_path):
     if not os.path.isdir(json_path):
         os.mkdir(json_path)
-    with open(json_path + "guides_by_category.json", 'w+') as f:
-        json.dump({
-            "guides_by_category": guides_by_category,
-            }, f)
-    for guide in guides: 
-        with open(json_path + guide["name"] + ".json", 'w+') as f:
-            json.dump({
-                "guide": guide
-                }, f)
-    with open(json_path + "guide_names.json", 'w+') as f:
-        json.dump({
-            "guide_names": guide_names,
-            "guide_urls": guide_urls
-            }, f)
-
-
+    with open(json_path + "guides_by_category.json", "w+") as f:
+        json.dump(
+            {
+                "guides_by_category": guides_by_category,
+            },
+            f,
+        )
+    for guide in guides:
+        with open(json_path + guide["name"] + ".json", "w+") as f:
+            json.dump({"guide": guide}, f)
+    with open(json_path + "guide_names.json", "w+") as f:
+        json.dump({"guide_names": guide_names, "guide_urls": guide_urls}, f)

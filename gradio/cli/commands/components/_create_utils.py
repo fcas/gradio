@@ -9,6 +9,8 @@ import textwrap
 from pathlib import Path
 from typing import Literal
 
+from huggingface_hub import snapshot_download
+
 import gradio
 
 
@@ -87,7 +89,7 @@ OVERRIDES = {
     "Plot": ComponentFiles(template="Plot", demo_code=static_only_demo_code),
     "BarPlot": ComponentFiles(
         template="BarPlot",
-        python_file_name="bar_plot.py",
+        python_file_name="native_plot.py",
         js_dir="plot",
         demo_code=static_only_demo_code,
     ),
@@ -121,7 +123,7 @@ OVERRIDES = {
     ),
     "LinePlot": ComponentFiles(
         template="LinePlot",
-        python_file_name="line_plot.py",
+        python_file_name="native_plot.py",
         js_dir="plot",
         demo_code=static_only_demo_code,
     ),
@@ -139,7 +141,7 @@ OVERRIDES = {
     ),
     "ScatterPlot": ComponentFiles(
         template="ScatterPlot",
-        python_file_name="scatter_plot.py",
+        python_file_name="native_plot.py",
         js_dir="plot",
         demo_code=static_only_demo_code,
     ),
@@ -204,6 +206,42 @@ OVERRIDES = {
         python_file_name="image_editor.py",
         js_dir="imageeditor",
     ),
+    "MultimodalTextbox": ComponentFiles(
+        template="MultimodalTextbox",
+        python_file_name="multimodal_textbox.py",
+        js_dir="multimodaltextbox",
+    ),
+    "DownloadButton": ComponentFiles(
+        template="DownloadButton",
+        python_file_name="download_button.py",
+        js_dir="downloadbutton",
+    ),
+    "Walkthrough": ComponentFiles(
+        template="Walkthrough",
+        js_dir="tabs",
+        demo_code=textwrap.dedent(
+            """
+        with gr.Blocks() as demo:
+            with {name}():
+                with gr.Tab("Tab 1"):
+                    gr.Textbox(value="foo", interactive=True)
+                with gr.Tab("Tab 2"):
+                    gr.Number(value=10, interactive=True)
+        """
+        ),
+    ),
+    "Step": ComponentFiles(
+        template="Step",
+        js_dir="tabitem",
+        python_file_name="walkthrough.py",
+        demo_code=textwrap.dedent(
+            """
+        with gr.Blocks() as demo:
+            with {name}():
+                gr.Textbox(value="foo", interactive=True)
+        """
+        ),
+    ),
 }
 
 
@@ -226,17 +264,21 @@ def _get_js_dependency_version(name: str, local_js_dir: Path) -> str:
     return package_json["version"]
 
 
+def copy_svelte_to_deps(package_json: dict):
+    svelte_version = package_json.get("peerDependencies", {}).get("svelte", "latest")
+    package_json["dependencies"]["svelte"] = svelte_version
+    return package_json
+
+
 def _modify_js_deps(
     package_json: dict,
     key: Literal["dependencies", "devDependencies"],
-    gradio_dir: Path,
+    component_root: Path,
 ):
     for dep in package_json.get(key, []):
-        # if curent working directory is the gradio repo, use the local version of the dependency'
+        # if current working directory is the gradio repo, use the local version of the dependency'
         if not _in_test_dir() and dep.startswith("@gradio/"):
-            package_json[key][dep] = _get_js_dependency_version(
-                dep, gradio_dir / "_frontend_code"
-            )
+            package_json[key][dep] = _get_js_dependency_version(dep, component_root)
     return package_json
 
 
@@ -250,6 +292,26 @@ def delete_contents(directory: str | Path) -> None:
             shutil.rmtree(child)
 
 
+def _download_from_hub() -> Path:
+    version = gradio.__version__
+
+    return Path(
+        snapshot_download(
+            repo_id="gradio/frontend",
+            allow_patterns=f"{version}/**",
+            repo_type="dataset",
+        )
+    )
+
+
+def _get_component_root(component: ComponentFiles) -> Path:
+    gradio_dir = Path(inspect.getfile(gradio)).parent
+    component_root = gradio_dir / "_frontend_code" / gradio.__version__
+    if (component_root / component.js_dir).exists():
+        return component_root
+    return _download_from_hub() / gradio.__version__
+
+
 def _create_frontend(
     name: str,  # noqa: ARG001
     component: ComponentFiles,
@@ -259,7 +321,7 @@ def _create_frontend(
     frontend = directory / "frontend"
     frontend.mkdir(exist_ok=True)
 
-    p = Path(inspect.getfile(gradio)).parent
+    component_root = _get_component_root(component)
 
     def ignore(_src, names):
         ignored = []
@@ -274,20 +336,31 @@ def _create_frontend(
                 ignored.append(n)
         return ignored
 
+    # Replace once we figure out bug with svelte-package
     shutil.copytree(
-        str(p / "_frontend_code" / component.js_dir),
+        str(component_root / component.js_dir),
         frontend,
         dirs_exist_ok=True,
         ignore=ignore,
     )
     source_package_json = json.loads(Path(frontend / "package.json").read_text())
     source_package_json["name"] = package_name
-    source_package_json = _modify_js_deps(source_package_json, "dependencies", p)
-    source_package_json = _modify_js_deps(source_package_json, "devDependencies", p)
+    source_package_json = _modify_js_deps(
+        source_package_json, "dependencies", component_root
+    )
+    source_package_json = _modify_js_deps(
+        source_package_json, "devDependencies", component_root
+    )
+    source_package_json = copy_svelte_to_deps(source_package_json)
+
     (frontend / "package.json").write_text(json.dumps(source_package_json, indent=2))
     shutil.copy(
         str(Path(__file__).parent / "files" / "gradio.config.js"),
         frontend / "gradio.config.js",
+    )
+    shutil.copy(
+        str(Path(__file__).parent / "files" / "tsconfig.json"),
+        frontend / "tsconfig.json",
     )
 
 

@@ -1,45 +1,55 @@
 <script lang="ts">
-	import { onMount } from "svelte";
 	import { Image } from "@gradio/image/shared";
+	import { Video } from "@gradio/video/shared";
 	import type { FileData } from "@gradio/client";
 
-	export let value: { text: string; files: FileData[] } = {
-		text: "",
-		files: []
-	};
-	export let type: "gallery" | "table";
-	export let selected = false;
+	let {
+		value = { text: "", files: [] },
+		type,
+		selected = false
+	}: {
+		value?: { text: string; files: FileData[] };
+		type: "gallery" | "table";
+		selected?: boolean;
+	} = $props();
 
-	let size: number;
+	let size = $state<number>(0);
 	let el: HTMLDivElement;
 
 	function set_styles(element: HTMLElement, el_width: number): void {
-		if (!element || !el_width) return;
-		el.style.setProperty(
+		element.style.setProperty(
 			"--local-text-width",
-			`${el_width < 150 ? el_width : 200}px`
+			`${el_width && el_width < 150 ? el_width : 200}px`
 		);
-		el.style.whiteSpace = "unset";
+		element.style.whiteSpace = "unset";
 	}
 
-	onMount(() => {
-		set_styles(el, size);
+	$effect(() => {
+		if (el && size) {
+			set_styles(el, size);
+		}
 	});
 </script>
 
 <div
+	class="container"
 	bind:clientWidth={size}
 	bind:this={el}
 	class:table={type === "table"}
 	class:gallery={type === "gallery"}
 	class:selected
+	class:border={value}
 >
 	<p>{value.text ? value.text : ""}</p>
 	{#each value.files as file}
 		{#if file.mime_type && file.mime_type.includes("image")}
 			<Image src={file.url} alt="" />
+		{:else if file.mime_type && file.mime_type.includes("video")}
+			<Video src={file.url} alt="" loop={true} is_stream={false} />
+		{:else if file.mime_type && file.mime_type.includes("audio")}
+			<audio src={file.url} controls />
 		{:else}
-			{file.path}
+			{file.orig_name}
 		{/if}
 	{/each}
 </div>
@@ -56,13 +66,35 @@
 	div {
 		overflow: hidden;
 		min-width: var(--local-text-width);
-
 		white-space: nowrap;
 	}
 
-	:global(img) {
+	.container :global(img),
+	.container :global(video) {
+		object-fit: contain;
 		width: 100px;
 		height: 100px;
+	}
+
+	.container.selected {
+		border-color: var(--border-color-accent);
+	}
+	.border.table {
+		border: 2px solid var(--border-color-primary);
+	}
+
+	.container.table {
+		margin: 0 auto;
+		border-radius: var(--radius-lg);
+		overflow-x: auto;
+		width: max-content;
+		height: max-content;
+		object-fit: cover;
+		padding: var(--size-2);
+	}
+
+	.container.gallery {
+		object-fit: cover;
 	}
 
 	div > :global(p) {

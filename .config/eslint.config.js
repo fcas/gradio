@@ -26,36 +26,26 @@ const jsdoc_rules_disabled = Object.fromEntries(
 
 const js_rules = {
 	...js_rules_disabled,
-	"no-console": ["error", { allow: ["warn", "error", "debug", "info"] }],
+	// "no-console": ["error", { allow: ["warn", "error", "debug", "info"] }],
 	"no-constant-condition": "error",
 	"no-dupe-args": "error",
 	"no-extra-boolean-cast": "error",
 	"no-unexpected-multiline": "error",
 	"no-unreachable": "error",
 	"array-callback-return": "error",
-	complexity: "error",
-	"no-else-return": "error",
-	"no-useless-return": "error",
 	"no-undef": "error"
 };
 
 const ts_rules = {
 	...ts_rules_disabled,
 	"@typescript-eslint/adjacent-overload-signatures": "error",
-	"@typescript-eslint/explicit-function-return-type": [
-		"error",
-		{ allowExpressions: true }
-	],
 	"@typescript-eslint/consistent-type-exports": "error",
-	"@typescript-eslint/ban-types": "error",
 	"@typescript-eslint/array-type": "error",
 	"@typescript-eslint/no-inferrable-types": "error"
 };
 
 const jsdoc_rules = {
-	...jsdoc_rules_disabled,
-	"jsdoc/require-param-description": "error",
-	"jsdoc/require-returns-description": "error"
+	...jsdoc_rules_disabled
 };
 
 const { browser, es2021, node } = globals;
@@ -63,18 +53,24 @@ const { browser, es2021, node } = globals;
 export default [
 	{
 		ignores: [
-			".svelte-kit/**/*",
+			"**/.svelte-kit/**/*",
 			"**/node_modules/**",
 			"**/dist/**",
 			"**/.config/*",
 			"**/*.spec.ts",
 			"**/*.test.ts",
 			"**/*.node-test.ts",
-			"js/app/test/**/*",
+			"**/*.stories.*",
+			"client/js/src/test/**/*",
+			"js/build/out/**/*",
+			"js/spa/test/**/*",
 			"**/*vite.config.ts",
 			"**/_website/**/*",
+			"**/app/**/*",
 			"**/_spaces-test/**/*",
-			"**/preview/test/**/*"
+			"**/preview/test/**/*",
+			"**/component-test/**/*",
+			"**/js/wasm/src/webworker/**/*"
 		]
 	},
 	{

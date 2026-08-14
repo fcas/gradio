@@ -5,13 +5,13 @@ from gradio.themes.utils.theme_dropdown import create_theme_dropdown
 
 dropdown, js = create_theme_dropdown()
 
-with gr.Blocks(theme=gr.themes.Default()) as demo:
+with gr.Blocks() as demo:
     with gr.Row(equal_height=True):
         with gr.Column(scale=10):
             gr.Markdown(
                 """
                 # Theme preview: `{THEME}`
-                To use this theme, set `theme='{AUTHOR}/{SPACE_NAME}'` in `gr.Blocks()` or `gr.Interface()`.
+                To use this theme, set `theme='{AUTHOR}/{SPACE_NAME}'` in the `launch()` method of `gr.Blocks()` or `gr.Interface()`.
                 You can append an `@` and a semantic version expression, e.g. @>=1.0.0,<2.0.0 to pin to a given version
                 of this theme.
                 """
@@ -117,16 +117,23 @@ with gr.Blocks(theme=gr.themes.Default()) as demo:
 
     with gr.Row():
         with gr.Column(scale=2):
-            chatbot = gr.Chatbot([("Hello", "Hi")], label="Chatbot")
+            chatbot = gr.Chatbot(
+                [
+                    {"role": "user", "content": "Hello"},
+                    {"role": "assistant", "content": "Hi"},
+                ],
+                label="Chatbot",
+            )
             chat_btn = gr.Button("Add messages")
 
-            chat_btn.click(
-                lambda history: history
-                + [["How are you?", "I am good."]]
-                + (time.sleep(2) or []),
-                chatbot,
-                chatbot,
-            )
+            def add_messages(history):
+                time.sleep(2)
+                return history + [
+                    {"role": "user", "content": "How are you?"},
+                    {"role": "assistant", "content": "I am good."},
+                ]
+
+            chat_btn.click(add_messages, chatbot, chatbot)
         with gr.Column(scale=1):
             with gr.Accordion("Advanced Settings"):
                 gr.Markdown("Hello")
@@ -136,4 +143,4 @@ with gr.Blocks(theme=gr.themes.Default()) as demo:
 
 
 if __name__ == "__main__":
-    demo.queue().launch()
+    demo.queue().launch(theme=gr.themes.Default())

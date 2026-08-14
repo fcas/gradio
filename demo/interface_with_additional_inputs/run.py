@@ -3,7 +3,6 @@ import gradio as gr
 def generate_fake_image(prompt, seed, initial_image=None):
     return f"Used seed: {seed}", "https://dummyimage.com/300/09f.png"
 
-
 demo = gr.Interface(
     generate_fake_image,
     inputs=["textbox"],
@@ -11,7 +10,8 @@ demo = gr.Interface(
     additional_inputs=[
         gr.Slider(0, 1000),
         "image"
-    ]
+    ],
+    api_name="predict",
 )
 
 if __name__ == "__main__":

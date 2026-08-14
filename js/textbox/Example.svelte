@@ -1,24 +1,36 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 
-	export let value: string | null;
-	export let type: "gallery" | "table";
-	export let selected = false;
+	let {
+		value,
+		type,
+		selected = false
+	}: {
+		value: string | null;
+		type: "gallery" | "table";
+		selected?: boolean;
+	} = $props();
 
-	let size: number;
-	let el: HTMLDivElement;
+	let size = $state(0);
+	let el: HTMLDivElement | undefined = $state();
 
 	function set_styles(element: HTMLElement, el_width: number): void {
-		if (!element || !el_width) return;
-		el.style.setProperty(
+		element.style.setProperty(
 			"--local-text-width",
-			`${el_width < 150 ? el_width : 200}px`
+			`${el_width && el_width < 150 ? el_width : 200}px`
 		);
-		el.style.whiteSpace = "unset";
+		element.style.whiteSpace = "unset";
+	}
+
+	function truncate_text(text: string | null, max_length = 60): string {
+		if (!text) return "";
+		const str = String(text);
+		if (str.length <= max_length) return str;
+		return str.slice(0, max_length) + "...";
 	}
 
 	onMount(() => {
-		set_styles(el, size);
+		if (el) set_styles(el, size);
 	});
 </script>
 
@@ -29,7 +41,7 @@
 	class:gallery={type === "gallery"}
 	class:selected
 >
-	{value ? value : ""}
+	{truncate_text(value)}
 </div>
 
 <style>
@@ -39,8 +51,6 @@
 
 	div {
 		overflow: hidden;
-		min-width: var(--local-text-width);
-
 		white-space: nowrap;
 	}
 </style>

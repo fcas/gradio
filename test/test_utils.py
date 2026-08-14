@@ -4,16 +4,25 @@ import json
 import os
 import sys
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from typing import Literal
+from unittest.mock import patch
 
+import numpy as np
 import pytest
-from typing_extensions import Literal
+from gradio_client.exceptions import AppError
+from hypothesis import given, settings  # ty: ignore[unresolved-import]
+from hypothesis import strategies as st  # ty: ignore[unresolved-import]
 
+import gradio as gr
 from gradio import EventData, Request
+from gradio.exceptions import Error
 from gradio.external_utils import format_ner_list
 from gradio.utils import (
     FileSize,
+    SyncToAsyncIterator,
+    UnhashableKeyDict,
     _parse_file_size,
     abspath,
     append_unique_suffix,
@@ -23,15 +32,21 @@ from gradio.utils import (
     delete_none,
     diff,
     download_if_url,
-    get_continuous_fn,
+    error_payload,
     get_extension_from_file_path_or_url,
+    get_function_description,
     get_function_params,
+    get_heartbeat_rate,
+    get_icon_path,
     get_type_hints,
     ipython_check,
+    is_allowed_file,
+    is_hosted_notebook,
     is_in_or_equal,
     is_special_typed_parameter,
-    kaggle_check,
-    sagemaker_check,
+    parse_escaped_json,
+    safe_aclose_iterator,
+    safe_deepcopy,
     sanitize_list_for_csv,
     sanitize_value_for_csv,
     tex2svg,
@@ -81,51 +96,20 @@ class TestUtils:
         out_article = download_if_url(in_article)
         assert out_article == in_article
 
+    @pytest.mark.flaky
     def test_download_if_url_correct_parse(self):
-        in_article = "https://github.com/gradio-app/gradio/blob/master/README.md"
+        in_article = "https://huggingface.co/datasets/gradio/custom-html-gallery/blob/main/manifest.json"
         out_article = download_if_url(in_article)
         assert out_article != in_article
 
-    def test_sagemaker_check_false(self):
-        assert not sagemaker_check()
-
-    def test_sagemaker_check_false_if_boto3_not_installed(self):
-        with patch.dict(sys.modules, {"boto3": None}, clear=True):
-            assert not sagemaker_check()
-
-    @patch("boto3.session.Session.client")
-    def test_sagemaker_check_true(self, mock_client):
-        mock_client().get_caller_identity = MagicMock(
-            return_value={
-                "Arn": "arn:aws:sts::67364438:assumed-role/SageMaker-Datascients/SageMaker"
-            }
-        )
-        assert sagemaker_check()
-
-    def test_kaggle_check_false(self):
-        assert not kaggle_check()
+    def test_is_hosted_notebook_false(self):
+        assert not is_hosted_notebook()
 
     def test_kaggle_check_true_when_run_type_set(self):
         with patch.dict(
             os.environ, {"KAGGLE_KERNEL_RUN_TYPE": "Interactive"}, clear=True
         ):
-            assert kaggle_check()
-
-    def test_kaggle_check_true_when_both_set(self):
-        with patch.dict(
-            os.environ,
-            {"KAGGLE_KERNEL_RUN_TYPE": "Interactive", "GFOOTBALL_DATA_DIR": "./"},
-            clear=True,
-        ):
-            assert kaggle_check()
-
-    def test_kaggle_check_false_when_neither_set(self):
-        with patch.dict(
-            os.environ,
-            {"KAGGLE_KERNEL_RUN_TYPE": "", "GFOOTBALL_DATA_DIR": ""},
-            clear=True,
-        ):
-            assert not kaggle_check()
+            assert is_hosted_notebook()
 
 
 def test_assert_configs_are_equivalent():
@@ -141,6 +125,38 @@ def test_assert_configs_are_equivalent():
     assert assert_configs_are_equivalent_besides_ids(xray_config, xray_config_diff_ids)
     with pytest.raises(ValueError):
         assert_configs_are_equivalent_besides_ids(xray_config, xray_config_wrong)
+
+
+def test_get_heartbeat_rate(monkeypatch):
+    # Defaults to 15 seconds when nothing is configured.
+    monkeypatch.delenv("GRADIO_HEARTBEAT_INTERVAL", raising=False)
+    monkeypatch.delenv("GRADIO_IS_E2E_TEST", raising=False)
+    assert get_heartbeat_rate() == 15
+
+    # GRADIO_HEARTBEAT_INTERVAL overrides the default with a float value.
+    monkeypatch.setenv("GRADIO_HEARTBEAT_INTERVAL", "1.5")
+    assert get_heartbeat_rate() == 1.5
+
+    # It takes precedence over the GRADIO_IS_E2E_TEST fallback.
+    monkeypatch.setenv("GRADIO_IS_E2E_TEST", "1")
+    assert get_heartbeat_rate() == 1.5
+
+    # Falls back to the E2E rate when only GRADIO_IS_E2E_TEST is set.
+    monkeypatch.delenv("GRADIO_HEARTBEAT_INTERVAL", raising=False)
+    assert get_heartbeat_rate() == 0.25
+
+    # An invalid value warns and falls back to the default.
+    monkeypatch.delenv("GRADIO_IS_E2E_TEST", raising=False)
+    monkeypatch.setenv("GRADIO_HEARTBEAT_INTERVAL", "not-a-number")
+    with pytest.warns(UserWarning):
+        assert get_heartbeat_rate() == 15
+
+    # A zero or negative value would busy-loop asyncio.sleep(), so it warns
+    # and falls back to the default.
+    for bad_value in ("0", "-5"):
+        monkeypatch.setenv("GRADIO_HEARTBEAT_INTERVAL", bad_value)
+        with pytest.warns(UserWarning):
+            assert get_heartbeat_rate() == 15
 
 
 class TestFormatNERList:
@@ -212,6 +228,13 @@ class TestSanitizeForCSV:
             [["=abc", "def", "gh,+ij"], ["abc", "=def", "+ghij"]]
         ) == [["'=abc", "def", "'gh,+ij"], ["abc", "'=def", "'+ghij"]]
         assert sanitize_list_for_csv([1, ["ab", "=de"]]) == [1, ["ab", "'=de"]]
+
+    def test_parse_escaped_json(self):
+        assert parse_escaped_json("-0.5678") == -0.5678
+        # Negative numbers get CSV-escaped with a leading "'" on write (#13591)
+        assert parse_escaped_json("'-0.5678") == -0.5678
+        with pytest.raises(json.JSONDecodeError):
+            parse_escaped_json("'not json")
 
 
 class TestValidateURL:
@@ -298,12 +321,21 @@ class TestGetTypeHints:
         for x in test_objs:
             hints = get_type_hints(x)
             assert len(hints) == 1
-            assert hints["s"] == str
+            assert hints["s"] is str
 
         assert len(get_type_hints(GenericObject())) == 0
 
+    def test_get_type_hints_with_unresolvable_forward_ref(self):
+        """get_type_hints should return {} when annotations can't be resolved at runtime."""
+
+        def func(x: str) -> "NonExistentType":  # noqa: F821, UP037  # ty: ignore[unresolved-reference]
+            return x
+
+        hints = get_type_hints(func)
+        assert hints == {}
+
     def test_is_special_typed_parameter(self):
-        def func(a: list[str], b: Literal["a", "b"], c, d: Request):
+        def func(a: list[str], b: Literal["a", "b"], c, d: Request, e: Request | None):
             pass
 
         hints = get_type_hints(func)
@@ -311,6 +343,7 @@ class TestGetTypeHints:
         assert not is_special_typed_parameter("b", hints)
         assert not is_special_typed_parameter("c", hints)
         assert is_special_typed_parameter("d", hints)
+        assert is_special_typed_parameter("e", hints)
 
     def test_is_special_typed_parameter_with_pipe(self):
         def func(a: Request, b: str | int, c: list[str]):
@@ -344,71 +377,6 @@ class TestCheckFunctionInputsMatch:
                 check_function_inputs_match(x, [None], False)
 
 
-class TestGetContinuousFn:
-    @pytest.mark.asyncio
-    async def test_get_continuous_fn(self):
-        def int_return(x):  # for origin condition
-            return x + 1
-
-        def int_yield(x):  # new condition
-            for _i in range(2):
-                yield x
-                x += 1
-
-        def list_yield(x):  # new condition
-            for _i in range(2):
-                yield x
-                x += [1]
-
-        agen_int_return = get_continuous_fn(fn=int_return, every=0.01)
-        agen_int_yield = get_continuous_fn(fn=int_yield, every=0.01)
-        agen_list_yield = get_continuous_fn(fn=list_yield, every=0.01)
-        agener_int_return = agen_int_return(1)
-        agener_int = agen_int_yield(1)  # Primitive
-        agener_list = agen_list_yield([1])  # Reference
-        assert await agener_int_return.__anext__() == 2
-        assert await agener_int_return.__anext__() == 2
-        assert await agener_int.__anext__() == 1
-        assert await agener_int.__anext__() == 2
-        assert await agener_int.__anext__() == 1
-        assert [1] == await agener_list.__anext__()
-        assert [1, 1] == await agener_list.__anext__()
-        assert [1, 1, 1] == await agener_list.__anext__()
-
-    @pytest.mark.asyncio
-    async def test_get_continuous_fn_with_async_function(self):
-        async def async_int_return(x):  # for origin condition
-            return x + 1
-
-        agen_int_return = get_continuous_fn(fn=async_int_return, every=0.01)
-        agener_int_return = agen_int_return(1)
-        assert await agener_int_return.__anext__() == 2
-        assert await agener_int_return.__anext__() == 2
-
-    @pytest.mark.asyncio
-    async def test_get_continuous_fn_with_async_generator(self):
-        async def async_int_yield(x):  # new condition
-            for _i in range(2):
-                yield x
-                x += 1
-
-        async def async_list_yield(x):  # new condition
-            for _i in range(2):
-                yield x
-                x += [1]
-
-        agen_int_yield = get_continuous_fn(fn=async_int_yield, every=0.01)
-        agen_list_yield = get_continuous_fn(fn=async_list_yield, every=0.01)
-        agener_int = agen_int_yield(1)  # Primitive
-        agener_list = agen_list_yield([1])  # Reference
-        assert await agener_int.__anext__() == 1
-        assert await agener_int.__anext__() == 2
-        assert await agener_int.__anext__() == 1
-        assert [1] == await agener_list.__anext__()
-        assert [1, 1] == await agener_list.__anext__()
-        assert [1, 1, 1] == await agener_list.__anext__()
-
-
 def test_tex2svg_preserves_matplotlib_backend():
     import matplotlib
 
@@ -433,6 +401,135 @@ def test_is_in_or_equal():
     assert not is_in_or_equal("/safe_dir/subdir/../../unsafe_file.txt", "/safe_dir/")
 
 
+@pytest.mark.skipif(
+    sys.platform.startswith("win"),
+    reason="Windows doesn't support POSIX double-slash notation",
+)
+def test_is_in_or_equal_posix_specific_paths():
+    assert is_in_or_equal("//foo/..a", "//foo")
+    assert is_in_or_equal("//foo/asd/", "/foo")
+    assert is_in_or_equal("//foo/..²", "/foo")
+
+
+def create_path_string():
+    return st.lists(
+        st.one_of(
+            st.text(
+                alphabet="ab@1/(",
+                min_size=1,
+            ),
+            st.just(".."),
+            st.just("."),
+        ),
+        min_size=1,
+        max_size=10,  # Limit depth to avoid excessively long paths
+    ).map(lambda x: os.path.join(*x).replace("(", ".."))
+
+
+def create_path_list():
+    return st.lists(create_path_string(), min_size=0, max_size=5)
+
+
+def my_check(path_1, path_2):
+    try:
+        path_1 = Path(path_1).resolve()
+        path_2 = Path(path_2).resolve()
+        _ = path_1.relative_to(path_2)
+        return True
+    except ValueError:
+        return False
+
+
+@settings(derandomize=os.getenv("CI") is not None)
+@given(
+    path_1=create_path_string(),
+    path_2=create_path_string(),
+)
+def test_is_in_or_equal_fuzzer(path_1, path_2):
+    try:
+        # Convert to absolute paths
+        abs_path_1 = abspath(path_1)
+        abs_path_2 = abspath(path_2)
+        result = is_in_or_equal(abs_path_1, abs_path_2)
+        assert result == my_check(abs_path_1, abs_path_2)
+
+    except Exception as e:
+        pytest.fail(f"Exception raised: {e}")
+
+
+@settings(derandomize=os.getenv("CI") is not None)
+@given(
+    path=create_path_string(),
+    blocked_paths=create_path_list(),
+    allowed_paths=create_path_list(),
+    created_paths=create_path_list(),
+)
+def test_is_allowed_file_fuzzer(
+    path: Path,
+    blocked_paths: Sequence[Path],
+    allowed_paths: Sequence[Path],
+    created_paths: Sequence[Path],
+):
+    result, reason = is_allowed_file(path, blocked_paths, allowed_paths, created_paths)
+
+    assert isinstance(result, bool)
+    assert reason in [
+        "in_blocklist",
+        "allowed",
+        "not_created_or_allowed",
+        "created",
+    ]
+
+    if result:
+        assert reason in ("allowed", "created")
+    elif reason == "in_blocklist":
+        assert any(is_in_or_equal(path, blocked_path) for blocked_path in blocked_paths)
+    elif reason == "not_created_or_allowed":
+        assert not any(
+            is_in_or_equal(path, allowed_path) for allowed_path in allowed_paths
+        )
+
+    if reason == "allowed":
+        assert any(is_in_or_equal(path, allowed_path) for allowed_path in allowed_paths)
+    elif reason == "created":
+        assert any(is_in_or_equal(path, created_path) for created_path in created_paths)
+
+
+@pytest.mark.parametrize(
+    "path,blocked_paths,allowed_paths",
+    [
+        ("/a/foo.txt", ["/a"], ["/b"], False),
+        ("/b/foo.txt", ["/a"], ["/b"], True),
+        ("/a/../c/foo.txt", ["/c/"], ["/a/"], False),
+        ("/c/../a/foo.txt", ["/c/"], ["/a/"], True),
+        ("/c/foo.txt", ["/c/"], ["/c/foo.txt"], True),
+    ],
+)
+def is_allowed_file_corner_cases(path, blocked_paths, allowed_paths, result):
+    assert is_allowed_file(path, blocked_paths, allowed_paths, []) == result
+
+
+# Additional test for known edge cases
+@pytest.mark.parametrize(
+    "path_1,path_2,expected",
+    [
+        ("/AAA/a/../a", "/AAA", True),
+        ("//AA/a", "/tmp", False),
+        ("/AAA/..", "/AAA", False),
+        ("/a/b/c", "/d/e/f", False),
+        (".", "..", True),
+        ("..", ".", False),
+        ("/a/b/./c", "/a/b", True),
+        ("/a/b/../c", "/a", True),
+        ("/a/b/c", "/a/b/c/../d", False),
+        ("/", "/a", False),
+        ("/a", "/", True),
+    ],
+)
+def test_is_in_or_equal_edge_cases(path_1, path_2, expected):
+    assert is_in_or_equal(path_1, path_2) == expected
+
+
 @pytest.mark.parametrize(
     "path_or_url, extension",
     [
@@ -450,9 +547,51 @@ def test_get_extension_from_file_path_or_url(path_or_url, extension):
     "old, new, expected_diff",
     [
         ({"a": 1, "b": 2}, {"a": 1, "b": 2}, []),
-        ({}, {"a": 1, "b": 2}, [("add", ["a"], 1), ("add", ["b"], 2)]),
-        (["a", "b"], {"a": 1, "b": 2}, [("replace", [], {"a": 1, "b": 2})]),
-        ("abc", "abcdef", [("append", [], "def")]),
+        ({}, {"a": 1, "b": 2}, [["add", ["a"], 1], ["add", ["b"], 2]]),
+        (["a", "b"], {"a": 1, "b": 2}, [["replace", [], {"a": 1, "b": 2}]]),
+        ("abc", "abcdef", [["append", [], "def"]]),
+        (
+            [
+                {"role": "user", "content": "Hello!", "metadata": {"id": 1}},
+                {"role": "assistant", "content": "b"},
+            ],
+            [
+                {
+                    "role": "assistant",
+                    "content": "Thinking...",
+                    "metadata": {"title": "Thinking..."},
+                },
+                {"role": "assistant", "content": "b"},
+            ],
+            [
+                ["replace", [0, "role"], "assistant"],
+                ["replace", [0, "content"], "Thinking..."],
+                ["delete", [0, "metadata", "id"], None],
+                ["add", [0, "metadata", "title"], "Thinking..."],
+            ],
+        ),
+        (
+            [
+                {"role": "user", "content": "Hello!", "metadata": {"id": 1}},
+                {"role": "assistant", "content": "b"},
+            ],
+            [
+                {"role": "user", "content": "No metadata", "metadata": {}},
+                {"role": "assistant", "content": "b"},
+            ],
+            [
+                ["replace", [0, "content"], "No metadata"],
+                ["delete", [0, "metadata", "id"], None],
+            ],
+        ),
+        (
+            {"data": [[1, 1], [2, 2], [3, 3]]},
+            {"data": [[1, 1]]},
+            [
+                ["delete", ["data", 1], None],
+                ["delete", ["data", 1], None],
+            ],
+        ),
     ],
 )
 def test_diff(old, new, expected_diff):
@@ -461,14 +600,14 @@ def test_diff(old, new, expected_diff):
 
 class TestFunctionParams:
     def test_regular_function(self):
-        def func(a, b=10, c="default", d=None):
+        def func(a: int, b: int = 10, c: str = "default", d=None):
             pass
 
         assert get_function_params(func) == [
-            ("a", False, None),
-            ("b", True, 10),
-            ("c", True, "default"),
-            ("d", True, None),
+            ("a", False, None, int),
+            ("b", True, 10, int),
+            ("c", True, "default", str),
+            ("d", True, None, None),
         ]
 
     def test_function_no_params(self):
@@ -479,21 +618,38 @@ class TestFunctionParams:
 
     def test_lambda_function(self):
         assert get_function_params(lambda x, y: x + y) == [
-            ("x", False, None),
-            ("y", False, None),
+            ("x", False, None, None),
+            ("y", False, None, None),
         ]
 
     def test_function_with_args(self):
         def func(a, *args):
             pass
 
-        assert get_function_params(func) == [("a", False, None)]
+        assert get_function_params(func) == [("a", False, None, None)]
 
     def test_function_with_kwargs(self):
         def func(a, **kwargs):
             pass
 
-        assert get_function_params(func) == [("a", False, None)]
+        assert get_function_params(func) == [("a", False, None, None)]
+
+    def test_function_with_special_args(self):
+        def func(a, r: Request, b=10):
+            pass
+
+        assert get_function_params(func) == [
+            ("a", False, None, None),
+            ("b", True, 10, None),
+        ]
+
+        def func2(a, r: Request | None = None, b="abc"):
+            pass
+
+        assert get_function_params(func2) == [
+            ("a", False, None, None),
+            ("b", True, "abc", None),
+        ]
 
     def test_class_method_skip_first_param(self):
         class MyClass:
@@ -501,8 +657,8 @@ class TestFunctionParams:
                 pass
 
         assert get_function_params(MyClass().method) == [
-            ("arg1", False, None),
-            ("arg2", True, 42),
+            ("arg1", False, None, None),
+            ("arg2", True, 42, None),
         ]
 
     def test_static_method_no_skip(self):
@@ -512,8 +668,8 @@ class TestFunctionParams:
                 pass
 
         assert get_function_params(MyClass.method) == [
-            ("arg1", False, None),
-            ("arg2", True, 42),
+            ("arg1", False, None, None),
+            ("arg2", True, 42, None),
         ]
 
     def test_class_method_with_args(self):
@@ -521,16 +677,478 @@ class TestFunctionParams:
             def method(self, a, *args, b=42):
                 pass
 
-        assert get_function_params(MyClass().method) == [("a", False, None)]
+        assert get_function_params(MyClass().method) == [("a", False, None, None)]
 
     def test_lambda_with_args(self):
-        assert get_function_params(lambda x, *args: x) == [("x", False, None)]
+        assert get_function_params(lambda x, *args: x) == [("x", False, None, None)]
 
     def test_lambda_with_kwargs(self):
-        assert get_function_params(lambda x, **kwargs: x) == [("x", False, None)]
+        assert get_function_params(lambda x, **kwargs: x) == [("x", False, None, None)]
 
 
 def test_parse_file_size():
     assert _parse_file_size("1kb") == 1 * FileSize.KB
     assert _parse_file_size("1mb") == 1 * FileSize.MB
     assert _parse_file_size("505 Mb") == 505 * FileSize.MB
+
+
+class TestUnhashableKeyDict:
+    def test_set_get_simple(self):
+        d = UnhashableKeyDict()
+        d["a"] = 1
+        assert d["a"] == 1
+
+    def test_set_get_unhashable(self):
+        d = UnhashableKeyDict()
+        key = [1, 2, 3]
+        key2 = [1, 2, 3]
+        d[key] = "value"
+        assert d[key] == "value"
+        assert d[key2] == "value"
+
+    def test_set_get_numpy_array(self):
+        d = UnhashableKeyDict()
+        key = np.array([1, 2, 3])
+        key2 = np.array([1, 2, 3])
+        d[key] = "numpy value"
+        assert d[key2] == "numpy value"
+
+    def test_overwrite(self):
+        d = UnhashableKeyDict()
+        d["key"] = "old"
+        d["key"] = "new"
+        assert d["key"] == "new"
+
+    def test_delete(self):
+        d = UnhashableKeyDict()
+        d["key"] = "value"
+        del d["key"]
+        assert len(d) == 0
+        with pytest.raises(KeyError):
+            d["key"]
+
+    def test_delete_nonexistent(self):
+        d = UnhashableKeyDict()
+        with pytest.raises(KeyError):
+            del d["nonexistent"]
+
+    def test_len(self):
+        d = UnhashableKeyDict()
+        assert len(d) == 0
+        d["a"] = 1
+        d["b"] = 2
+        assert len(d) == 2
+
+    def test_contains(self):
+        d = UnhashableKeyDict()
+        d["key"] = "value"
+        assert "key" in d
+        assert "nonexistent" not in d
+
+    def test_get_nonexistent(self):
+        d = UnhashableKeyDict()
+        with pytest.raises(KeyError):
+            d["nonexistent"]
+
+
+class TestSafeDeepCopy:
+    def test_safe_deepcopy_dict(self):
+        original = {"key1": [1, 2, {"nested_key": "value"}], "key2": "simple_string"}
+        copied = safe_deepcopy(original)
+
+        assert copied == original
+        assert copied is not original
+        assert copied["key1"] is not original["key1"]
+        assert copied["key1"][2] is not original["key1"][2]
+
+    def test_safe_deepcopy_list(self):
+        original = [1, 2, [3, 4, {"key": "value"}]]
+        copied = safe_deepcopy(original)
+
+        assert copied == original
+        assert copied is not original
+        assert copied[2] is not original[2]
+        assert copied[2][2] is not original[2][2]  # type: ignore
+
+    def test_safe_deepcopy_custom_object(self):
+        class CustomClass:
+            def __init__(self, value):
+                self.value = value
+
+        original = CustomClass(10)
+        copied = safe_deepcopy(original)
+
+        assert copied.value == original.value
+        assert copied is not original
+
+    def test_safe_deepcopy_handles_undeepcopyable(self):
+        class Uncopyable:
+            def __deepcopy__(self, memo):
+                raise TypeError("Can't deepcopy")
+
+        original = Uncopyable()
+        result = safe_deepcopy(original)
+        assert result is not original
+        assert type(result) is type(original)
+
+
+def test_get_icon_path():
+    assert get_icon_path("plus.svg").endswith("plus.svg")
+    assert get_icon_path("huggingface-logo.svg").endswith("huggingface-logo.svg")
+
+
+def test_error_payload():
+    result = error_payload(None, False)
+    assert result == {"error": None}
+
+    result = error_payload(Exception("test error"), True)
+    assert result == {"error": "test error", "visible": True}
+
+    gr_error = Error("custom error", duration=1.5, visible=True, title="Error Title")
+    result = error_payload(gr_error, False)
+    assert result == {
+        "error": "custom error",
+        "duration": 1.5,
+        "visible": True,
+        "title": "Error Title",
+    }
+
+    app_error = AppError("custom error")
+    result = error_payload(app_error, False)
+    assert result == {
+        "error": "custom error",
+        "duration": 10,
+        "visible": True,
+        "title": "Error",
+    }
+
+
+class TestGetFunctionDescription:
+    def test_basic_function_description(self):
+        def test_func(param1, param2):
+            """This is a test function.
+            Args:
+                param1: First parameter
+                param2: Second parameter
+            Returns:
+                - First return value
+                - Second return value
+            """
+            pass
+
+        description, parameters, returns = get_function_description(test_func)
+        assert description == "This is a test function."
+        assert parameters == {"param1": "First parameter", "param2": "Second parameter"}
+        assert returns == ["- First return value", "- Second return value"]
+
+    def test_function_with_extended_returns(self):
+        def test_func(param1, param2):
+            """This is a test function.
+            Args:
+                param1: First parameter
+                param2: Second parameter
+            Returns:
+                - First return value
+                - Second return value
+            Examples:
+                - Example 1
+                - Example 2
+            """
+            pass
+
+        description, parameters, returns = get_function_description(test_func)
+        assert description == "This is a test function."
+        assert parameters == {"param1": "First parameter", "param2": "Second parameter"}
+        assert returns == [
+            "- First return value",
+            "- Second return value",
+            "Examples:",
+            "- Example 1",
+            "- Example 2",
+        ]
+
+    def test_function_with_no_docstring(self):
+        def test_func():
+            pass
+
+        description, parameters, returns = get_function_description(test_func)
+        assert description == ""
+        assert parameters == {}
+        assert returns == []
+
+    def test_function_with_no_parameters(self):
+        def test_func():
+            """This is a test function with no parameters."""
+            pass
+
+        description, parameters, returns = get_function_description(test_func)
+        assert description == "This is a test function with no parameters."
+        assert parameters == {}
+        assert returns == []
+
+    def test_function_with_alternate_parameter_section(self):
+        def test_func(param1, param2):
+            """This is a test function.
+            Parameters:
+                param1: First parameter
+                param2: Second parameter
+            """
+            pass
+
+        description, parameters, returns = get_function_description(test_func)
+        assert description == "This is a test function."
+        assert parameters == {"param1": "First parameter", "param2": "Second parameter"}
+        assert returns == []
+
+    def test_function_with_arguments_section(self):
+        def test_func(param1, param2):
+            """This is a test function.
+            Arguments:
+                param1: First parameter
+                param2: Second parameter
+            Returns:
+                x: First return value
+                y: Second return value
+            """
+            pass
+
+        description, parameters, returns = get_function_description(test_func)
+        assert description == "This is a test function."
+        assert parameters == {"param1": "First parameter", "param2": "Second parameter"}
+        assert returns == ["x: First return value", "y: Second return value"]
+
+    def test_function_with_multiline_description(self):
+        def test_func(param1, param2):
+            """This is a test function.
+            It has multiple lines of description.
+            Args:
+                param1: First parameter
+                param2: Second parameter
+            """
+            pass
+
+        description, parameters, returns = get_function_description(test_func)
+        assert (
+            description
+            == "This is a test function. It has multiple lines of description."
+        )
+        assert parameters == {"param1": "First parameter", "param2": "Second parameter"}
+        assert returns == []
+
+    def test_function_with_missing_params(self):
+        def test_func(param1, param2, param3):
+            """This is a test function.
+            Args:
+            param1: description1
+            param3: description3
+            Returns:
+                - First return value
+                - Second return value
+            """
+            pass
+
+        description, parameters, returns = get_function_description(test_func)
+        assert description == "This is a test function."
+        assert parameters == {
+            "param1": "description1",
+            "param2": "",
+            "param3": "description3",
+        }
+        assert returns == ["- First return value", "- Second return value"]
+
+    def test_function_with_nested_colons(self):
+        def test_func(param1, param2):
+            """This is a test function.
+            Args:
+            param1: description1: with nested colon
+            param2: description2
+            """
+            pass
+
+        description, parameters, returns = get_function_description(test_func)
+        assert description == "This is a test function."
+        assert parameters == {
+            "param1": "description1: with nested colon",
+            "param2": "description2",
+        }
+        assert returns == []
+
+    def test_get_function_description_inherits_parent_docstring(self):
+        """
+        Test that get_function_description correctly retrieves docstrings
+        from a method's parent class if the method itself has none.
+        """
+
+        class Parent:
+            def method(self):
+                """This is the docstring from the parent class."""
+                pass
+
+        class Child(Parent):
+            def method(self):
+                pass  # No docstring here
+
+        description, parameters, returns = get_function_description(Child().method)
+        assert parameters == {}
+        assert returns == []
+        assert description == "This is the docstring from the parent class."
+
+
+class TestConnectHeartbeat:
+    def test_unload_registered_last(self):
+        with gr.Blocks() as demo:
+            msg = gr.Markdown("# Test")
+            gr.Button("Click").click(lambda: "# TADA!", outputs=[msg])
+            demo.unload(lambda: None)
+
+        config = demo.get_config_file()
+        assert config["connect_heartbeat"] is True
+
+    def test_unload_registered_first(self):
+        with gr.Blocks() as demo:
+            demo.unload(lambda: None)
+            msg = gr.Markdown("# Test")
+            gr.Button("Click").click(lambda: "# TADA!", outputs=[msg])
+
+        config = demo.get_config_file()
+        assert config["connect_heartbeat"] is True
+
+    def test_unload_registered_in_middle(self):
+        with gr.Blocks() as demo:
+            msg = gr.Markdown("# Test")
+            gr.Button("Click1").click(lambda: "# 1", outputs=[msg])
+            demo.unload(lambda: None)
+            gr.Button("Click2").click(lambda: "# 2", outputs=[msg])
+
+        config = demo.get_config_file()
+        assert config["connect_heartbeat"] is True
+
+    def test_no_unload_no_heartbeat(self):
+        with gr.Blocks() as demo:
+            msg = gr.Markdown("# Test")
+            gr.Button("Click").click(lambda: "# TADA!", outputs=[msg])
+
+        config = demo.get_config_file()
+        assert config["connect_heartbeat"] is False
+
+    def test_per_session_manual_cache_connects_heartbeat(self):
+        def predict(value, cache=gr.Cache(per_session=True)):
+            hit = cache.get(value)
+            if hit is not None:
+                return hit["value"]
+            cache.set(value, value=value)
+            return value
+
+        with gr.Blocks() as demo:
+            text = gr.Textbox()
+            output = gr.Textbox()
+            gr.Button("Click").click(predict, [text], [output])
+
+        config = demo.get_config_file()
+        assert config["connect_heartbeat"] is True
+
+    def test_per_session_decorator_cache_connects_heartbeat(self):
+        @gr.cache(per_session=True)
+        def predict(value):
+            return value
+
+        with gr.Blocks() as demo:
+            text = gr.Textbox()
+            output = gr.Textbox()
+            gr.Button("Click").click(predict, [text], [output])
+
+        config = demo.get_config_file()
+        assert config["connect_heartbeat"] is True
+
+
+class _FakeIterator:
+    """A fake iterator with a controllable close() for testing."""
+
+    def __init__(self, fail_count=0):
+        self.close_call_count = 0
+        self._fail_count = fail_count
+        self._closed = False
+
+    def close(self):
+        self.close_call_count += 1
+        if self.close_call_count <= self._fail_count:
+            raise ValueError("generator already executing")
+        self._closed = True
+
+    def __next__(self):
+        raise StopIteration
+
+    def __iter__(self):
+        return self
+
+
+class TestSyncToAsyncIteratorAclose:
+    @pytest.mark.asyncio
+    async def test_aclose_closes_iterator(self):
+        """aclose() should call close() on the underlying sync iterator."""
+
+        def gen():
+            yield 1
+            yield 2
+
+        iterator = SyncToAsyncIterator(gen(), limiter=None)
+        await iterator.aclose()
+        assert list(iterator.iterator) == []
+
+    @pytest.mark.asyncio
+    async def test_aclose_retries_on_already_executing(self):
+        """aclose() should retry when ValueError('generator already executing') is raised."""
+        fake = _FakeIterator(fail_count=2)
+        iterator = SyncToAsyncIterator(fake, limiter=None)
+        await iterator.aclose(retry_interval=0.01)
+
+        assert fake.close_call_count == 3
+        assert fake._closed is True
+
+    @pytest.mark.asyncio
+    async def test_aclose_timeout_raises(self):
+        """aclose() should raise ValueError after timeout is exceeded."""
+        fake = _FakeIterator(fail_count=999)
+        iterator = SyncToAsyncIterator(fake, limiter=None)
+
+        with pytest.raises(ValueError, match="already executing"):
+            await iterator.aclose(timeout=0.1, retry_interval=0.02)
+
+    @pytest.mark.asyncio
+    async def test_aclose_raises_other_value_error(self):
+        """aclose() should not retry on ValueError without 'already executing'."""
+
+        class _BadIterator:
+            def close(self):
+                raise ValueError("some other error")
+
+        iterator = SyncToAsyncIterator(_BadIterator(), limiter=None)
+        with pytest.raises(ValueError, match="some other error"):
+            await iterator.aclose()
+
+
+class TestSafeAcloseIterator:
+    @pytest.mark.asyncio
+    async def test_delegates_to_aclose(self):
+        """safe_aclose_iterator() should call aclose() on the iterator."""
+
+        def gen():
+            yield 1
+
+        iterator = SyncToAsyncIterator(gen(), limiter=None)
+        await safe_aclose_iterator(iterator)
+        assert list(iterator.iterator) == []
+
+    @pytest.mark.asyncio
+    async def test_works_with_async_generator(self):
+        """safe_aclose_iterator() should work with native async generators."""
+
+        async def gen():
+            yield 1
+            yield 2
+
+        ag = gen()
+        await safe_aclose_iterator(ag)
+        # After aclose, async generator should raise StopAsyncIteration
+        with pytest.raises(StopAsyncIteration):
+            await ag.__anext__()

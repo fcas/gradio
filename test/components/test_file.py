@@ -2,14 +2,13 @@ import os
 from pathlib import Path
 
 import pytest
-from gradio_client import media_data
 
 import gradio as gr
 from gradio.data_classes import FileData, ListFiles
 
 
 class TestFile:
-    def test_component_functions(self):
+    def test_component_functions(self, media_data):
         """
         Preprocess, serialize, get_config, value
         """
@@ -20,8 +19,9 @@ class TestFile:
 
         input1 = file_input.preprocess(x_file)
         input2 = file_input.preprocess(x_file)
-        assert input1 == input1.name  # Testing backwards compatibility
+        assert input1 == input1.name  # type: ignore # Testing backwards compatibility
         assert input1 == input2
+        assert isinstance(input1, str)
         assert Path(input1).name == "sample_file.pdf"
 
         file_input = gr.File(label="Upload Your File")
@@ -42,15 +42,19 @@ class TestFile:
             "proxy_url": None,
             "_selectable": False,
             "key": None,
+            "preserved_by_key": ["value"],
             "height": None,
             "type": "filepath",
+            "allow_reordering": False,
+            "buttons": [],
         }
         assert file_input.preprocess(None) is None
         assert file_input.preprocess(x_file) is not None
 
         zero_size_file = FileData(path="document.txt", size=0)
         temp_file = file_input.preprocess(zero_size_file)
-        assert not Path(temp_file.name).exists()
+        assert isinstance(temp_file, str)
+        assert not Path(temp_file).exists()
 
         file_input = gr.File(type="binary")
         output = file_input.preprocess(x_file)
@@ -60,7 +64,7 @@ class TestFile:
         output2 = file_input.postprocess("test/test_files/sample_file.pdf")
         assert output1 == output2
 
-    def test_preprocess_with_multiple_files(self):
+    def test_preprocess_with_multiple_files(self, media_data):
         file_data = FileData(path=media_data.BASE64_FILE["path"])
         list_file_data = ListFiles(root=[file_data, file_data])
         file_input = gr.File(file_count="directory")
@@ -72,9 +76,9 @@ class TestFile:
         with pytest.raises(
             ValueError, match="Parameter file_types must be a list. Received str"
         ):
-            gr.File(file_types=".json")
+            gr.File(file_types=".json")  # type: ignore
 
-    def test_in_interface_as_input(self):
+    def test_in_interface_as_input(self, media_data):
         """
         Interface, process
         """

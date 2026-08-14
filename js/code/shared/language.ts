@@ -1,21 +1,6 @@
 import type { Extension } from "@codemirror/state";
 import { StreamLanguage } from "@codemirror/language";
-import { sql } from "@codemirror/legacy-modes/mode/sql";
-
-const possible_langs = [
-	"python",
-	"markdown",
-	"json",
-	"html",
-	"css",
-	"javascript",
-	"typescript",
-	"yaml",
-	"dockerfile",
-	"shell",
-	"r",
-	"sql"
-];
+import { _ } from "svelte-i18n";
 
 const sql_dialects = [
 	"standardSQL",
@@ -35,6 +20,14 @@ const sql_dialects = [
 
 const lang_map: Record<string, (() => Promise<Extension>) | undefined> = {
 	python: () => import("@codemirror/lang-python").then((m) => m.python()),
+	c: () =>
+		import("@codemirror/legacy-modes/mode/clike").then((m) =>
+			StreamLanguage.define(m.c)
+		),
+	cpp: () =>
+		import("@codemirror/legacy-modes/mode/clike").then((m) =>
+			StreamLanguage.define(m.cpp)
+		),
 	markdown: async () => {
 		const [md, frontmatter] = await Promise.all([
 			import("@codemirror/lang-markdown"),
@@ -42,11 +35,19 @@ const lang_map: Record<string, (() => Promise<Extension>) | undefined> = {
 		]);
 		return md.markdown({ extensions: [frontmatter.frontmatter] });
 	},
+	latex: () =>
+		import("@codemirror/legacy-modes/mode/stex").then((m) =>
+			StreamLanguage.define(m.stex)
+		),
 	json: () => import("@codemirror/lang-json").then((m) => m.json()),
 	html: () => import("@codemirror/lang-html").then((m) => m.html()),
 	css: () => import("@codemirror/lang-css").then((m) => m.css()),
 	javascript: () =>
 		import("@codemirror/lang-javascript").then((m) => m.javascript()),
+	jinja2: () =>
+		import("@codemirror/legacy-modes/mode/jinja2").then((m) =>
+			StreamLanguage.define(m.jinja2)
+		),
 	typescript: () =>
 		import("@codemirror/lang-javascript").then((m) =>
 			m.javascript({ typescript: true })

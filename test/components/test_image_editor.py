@@ -1,5 +1,5 @@
 import gradio as gr
-from gradio.components.image_editor import EditorData
+from gradio.components.image_editor import EditorData, EditorValue
 from gradio.data_classes import FileData
 
 
@@ -10,7 +10,7 @@ class TestImageEditor:
         image_editor_data = EditorData(
             background=image_data, layers=[image_data, image_data], composite=image_data
         )
-        payload = {
+        payload: EditorValue = {
             "background": test_image_path,
             "layers": [test_image_path, test_image_path],
             "composite": test_image_path,
@@ -26,17 +26,17 @@ class TestImageEditor:
             background=image_data, layers=[], composite=image_data
         )
         assert image_editor_component.postprocess(test_image_path) == simpler_data
+        print(image_editor_component.get_config())
 
         assert image_editor_component.get_config() == {
             "value": None,
             "height": None,
             "width": None,
             "image_mode": "RGBA",
-            "sources": ("upload", "webcam", "clipboard"),
+            "sources": ["upload", "webcam", "clipboard"],
             "type": "numpy",
             "label": None,
             "show_label": True,
-            "show_download_button": True,
             "container": True,
             "scale": None,
             "min_width": 160,
@@ -44,12 +44,11 @@ class TestImageEditor:
             "visible": True,
             "elem_id": None,
             "elem_classes": [],
-            "mirror_webcam": True,
-            "show_share_button": False,
+            "webcam_options": {"constraints": None, "mirror": True},
             "_selectable": False,
             "key": None,
-            "crop_size": None,
-            "transforms": ("crop",),
+            "preserved_by_key": ["value"],
+            "transforms": ["crop", "resize"],
             "eraser": {"default_size": "auto"},
             "brush": {
                 "default_size": "auto",
@@ -60,16 +59,36 @@ class TestImageEditor:
                     "rgb(50, 112, 204)",
                     "rgb(173, 50, 204)",
                 ],
-                "default_color": "auto",
+                "default_color": "rgb(204, 50, 50)",
                 "color_mode": "defaults",
             },
             "proxy_url": None,
             "name": "imageeditor",
             "server_fns": ["accept_blobs"],
             "format": "webp",
-            "layers": True,
-            "canvas_size": None,
+            "layers": {
+                "allow_additional_layers": True,
+                "layers": ["Layer 1"],
+                "disabled": False,
+            },
+            "canvas_size": [800, 800],
+            "placeholder": None,
+            "buttons": None,
+            "fixed_canvas": False,
         }
+
+    def test_brush_false_eraser_false_config(self):
+        editor = gr.ImageEditor(
+            brush=False,
+            eraser=False,
+            transforms=("crop",),
+            sources=("upload", "clipboard"),
+            layers=False,
+        )
+        config = editor.get_config()
+        assert config["brush"] is False
+        assert config["eraser"] is False
+        assert config["transforms"] == ["crop"]
 
     def test_process_example(self):
         test_image_path = "test/test_files/bus.png"

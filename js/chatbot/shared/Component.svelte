@@ -1,0 +1,173 @@
+<script lang="ts">
+	import type { I18nFormatter } from "js/core/src/gradio_helper";
+	import type { Client } from "@gradio/client";
+	import type { ComponentType, SvelteComponent } from "svelte";
+
+	let {
+		type,
+		components,
+		value,
+		target,
+		theme_mode,
+		props,
+		i18n,
+		upload,
+		_fetch,
+		allow_file_downloads,
+		display_icon_button_wrapper_top_corner = false,
+		onload
+	}: {
+		type:
+			| "gallery"
+			| "plot"
+			| "audio"
+			| "video"
+			| "image"
+			| "dataframe"
+			| "model3d"
+			| string;
+		components: Record<string, ComponentType<SvelteComponent>>;
+		value: any;
+		target: HTMLElement | null;
+		theme_mode: "light" | "dark" | "system";
+		props: any;
+		i18n: I18nFormatter;
+		upload: Client["upload"];
+		_fetch: typeof fetch;
+		allow_file_downloads: boolean;
+		display_icon_button_wrapper_top_corner?: boolean;
+		onload?: () => void;
+	} = $props();
+
+	// capitalised alias so it can be used as a component tag
+	let Comp = $derived(components[type]);
+
+	let image_fullscreen = $state(false);
+	let image_container: HTMLElement;
+
+	function handle_fullscreen(fullscreen: boolean): void {
+		image_fullscreen = fullscreen;
+		if (image_fullscreen && image_container) {
+			image_container.requestFullscreen?.();
+		} else if (document.fullscreenElement) {
+			document.exitFullscreen?.();
+		}
+	}
+
+	function handle_load(): void {
+		onload?.();
+	}
+</script>
+
+{#if type === "gallery"}
+	<Comp
+		{...props}
+		{value}
+		display_icon_button_wrapper_top_corner={false}
+		show_label={props.label ? true : false}
+		{i18n}
+		{_fetch}
+		allow_preview={false}
+		interactive={false}
+		mode="minimal"
+		fixed_height={1}
+		onload={handle_load}
+	/>
+{:else if type === "dataframe"}
+	<Comp
+		{...props}
+		{value}
+		show_label={props.label ? true : false}
+		{i18n}
+		interactive={false}
+		line_breaks={props.line_breaks}
+		wrap={true}
+		root=""
+		gradio={{ dispatch: () => {}, i18n }}
+		datatype={props.datatype}
+		latex_delimiters={props.latex_delimiters}
+		col_count={props.col_count}
+		row_count={props.row_count}
+		onload={handle_load}
+	/>
+{:else if type === "plot"}
+	<Comp
+		{...props}
+		{value}
+		{target}
+		{theme_mode}
+		on_change={() => {}}
+		bokeh_version={props.bokeh_version}
+		caption={props.caption || ""}
+		show_actions_button={true}
+		onload={handle_load}
+	/>
+{:else if type === "audio"}
+	<Comp
+		{...props}
+		{value}
+		show_label={props.label ? true : false}
+		show_share_button={false}
+		{i18n}
+		waveform_settings={{
+			...props.waveform_settings,
+			autoplay: props.autoplay
+		}}
+		show_download_button={false}
+		display_icon_button_wrapper_top_corner={false}
+		minimal={true}
+		onload={handle_load}
+	/>
+{:else if type === "video"}
+	<Comp
+		{...props}
+		autoplay={props.autoplay}
+		value={value.video || value}
+		show_label={props.label ? true : false}
+		show_share_button={false}
+		{i18n}
+		{upload}
+		display_icon_button_wrapper_top_corner={false}
+		show_download_button={false}
+		onload={handle_load}
+	>
+		<track kind="captions" />
+	</Comp>
+{:else if type === "image"}
+	<div bind:this={image_container}>
+		<Comp
+			{...props}
+			{value}
+			show_label={props.label ? true : false}
+			display_icon_button_wrapper_top_corner={false}
+			buttons={["fullscreen"]}
+			fullscreen={image_fullscreen}
+			show_button_background={false}
+			onfullscreen={handle_fullscreen}
+			onload={handle_load}
+			{i18n}
+		/>
+	</div>
+{:else if type === "html"}
+	<Comp {...props} props={{ value }} onload={handle_load} />
+{:else if type === "model3d"}
+	<Comp
+		{...props}
+		{value}
+		clear_color={props.clear_color}
+		display_mode={props.display_mode}
+		zoom_speed={props.zoom_speed}
+		pan_speed={props.pan_speed}
+		{...props.camera_position !== undefined && {
+			camera_position: props.camera_position
+		}}
+		has_change_history={true}
+		show_label={props.label ? true : false}
+		root=""
+		interactive={false}
+		show_share_button={false}
+		gradio={{ dispatch: () => {}, i18n }}
+		onload={handle_load}
+		{i18n}
+	/>
+{/if}

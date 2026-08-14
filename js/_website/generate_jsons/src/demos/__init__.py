@@ -1,20 +1,29 @@
 import json
-import os
+from pathlib import Path
 
-DIR = os.path.dirname(__file__)
-GRADIO_DEMO_DIR = os.path.abspath(os.path.join(DIR, "../../../../../demo/"))
 
-def get_code_description_and_reqs(demo_name):
-    with open(os.path.join(GRADIO_DEMO_DIR, demo_name, "run.py")) as f:
+HERE = Path(__file__).parent
+WEBSITE_DIR = HERE.joinpath("../../..").resolve()
+PROJECT_ROOT = WEBSITE_DIR.joinpath("../..").resolve()
+GRADIO_DEMO_DIR = PROJECT_ROOT / "demo"
+
+
+def get_code_description_and_reqs(demo_dir):
+    with demo_dir.joinpath("run.py").open() as f:
         code = f.read()
+
     description = ""
-    if os.path.exists(os.path.join(GRADIO_DEMO_DIR, demo_name, "DESCRIPTION.md")):
-        with open(os.path.join(GRADIO_DEMO_DIR, demo_name, "DESCRIPTION.md")) as f:
+    description_path = demo_dir.joinpath("DESCRIPTION.md")
+    if description_path.exists():
+        with description_path.open() as f:
             description = f.read()
+
     requirements = []
-    if os.path.exists(os.path.join(GRADIO_DEMO_DIR, demo_name, "requirements.txt")):
-        with open(os.path.join(GRADIO_DEMO_DIR, demo_name, "requirements.txt")) as f:
-            requirements = f.read().strip().split("\n")
+    requirements_path = demo_dir.joinpath("requirements.txt")
+    if requirements_path.exists():
+        with requirements_path.open() as f:
+            requirements = [line.strip() for line in f.read().strip().split("\n")]
+
     return code, description, requirements
 
 
@@ -23,31 +32,29 @@ demos_by_category = [
         "category": "Text",
         "demos": [
             {
-                "name": "Hello World", 
-                "dir": "hello_world", 
+                "name": "Hello World",
+                "dir": "hello_world",
             },
             {
-                "name": "Hello Blocks", 
-                "dir": "hello_blocks", 
+                "name": "Hello Blocks",
+                "dir": "hello_blocks",
             },
             {
-                "name": "Sentence Builder", 
-                "dir": "sentence_builder", 
+                "name": "Sentence Builder",
+                "dir": "sentence_builder",
             },
             {
-                "name": "Diff Texts", 
-                "dir": "diff_texts", 
+                "name": "Diff Texts",
+                "dir": "diff_texts",
             },
-            
-
-        ]
+        ],
     },
-     {
+    {
         "category": "Media",
         "demos": [
             {
-                "name": "Sepia Filter", 
-                "dir": "sepia_filter", 
+                "name": "Sepia Filter",
+                "dir": "sepia_filter",
             },
             {
                 "name": "Video Identity",
@@ -58,78 +65,93 @@ demos_by_category = [
                 "dir": "fake_diffusion",
             },
             {
-                "name": "Generate Tone", 
-                "dir": "generate_tone", 
+                "name": "Generate Tone",
+                "dir": "generate_tone",
             },
-        ]
+        ],
     },
     {
         "category": "Tabular",
         "demos": [
+            {"name": "Filter Records", "dir": "filter_records"},
+            {"name": "Transpose Matrix", "dir": "matrix_transpose"},
+            {"name": "Tax Calculator", "dir": "tax_calculator"},
             {
-                "name": "Filter Records",
-                "dir": "filter_records"
+                "name": "Kinematics",
+                "dir": "blocks_kinematics",
             },
             {
-                "name": "Transpose Matrix",
-                "dir": "matrix_transpose"
+                "name": "Stock Forecast",
+                "dir": "stock_forecast",
+            },
+        ],
+    },
+    {
+        "category": "Chatbots",
+        "demos": [
+            {
+                "name": "Chatbot",
+                "dir": "chatinterface_random_response",
             },
             {
-                "name": "Tax Calculator",
-                "dir": "tax_calculator"
+                "name": "Streaming Chatbot",
+                "dir": "chatinterface_streaming_echo",
             },
             {
-                "name": "Kinematics", 
-                "dir": "blocks_kinematics", 
+                "name": "Chatbot with Tools",
+                "dir": "chatbot_with_tools",
             },
             {
-                "name": "Stock Forecast", 
-                "dir": "stock_forecast", 
+                "name": "Chatinterface with Code",
+                "dir": "chatinterface_artifacts",
             },
-        ]
+        ],
     },
     {
         "category": "Other",
         "demos": [
             {
-                "name": "Tabbed Interface", 
-                "dir": "tabbed_interface_lite", 
+                "name": "Tabbed Interface",
+                "dir": "tabbed_interface_lite",
             },
             {
-                "name": "Chatbot", 
-                "dir": "chatinterface_random_response", 
+                "name": "Layouts",
+                "dir": "blocks_flipper",
             },
             {
-                "name": "Streaming Chatbot", 
-                "dir": "chatinterface_streaming_echo", 
+                "name": "Error",
+                "dir": "calculator",
             },
             {
-                "name": "Layouts", 
-                "dir": "blocks_flipper", 
+                "name": "Chained Events",
+                "dir": "blocks_chained_events",
             },
             {
-                "name": "Error", 
-                "dir": "calculator", 
+                "name": "Change Listener",
+                "dir": "blocks_hello",
             },
-            {
-                "name": "Chained Events", 
-                "dir": "blocks_chained_events", 
-            },
-            {
-                "name": "Change Listener", 
-                "dir": "blocks_hello", 
-            }
-        ]
-    }
+        ],
+    },
 ]
+
 
 for category in demos_by_category:
     for demo in category["demos"]:
-        code, description, requirements = get_code_description_and_reqs(demo["dir"])
-        demo["code"] = code
+        base_dir = GRADIO_DEMO_DIR
+        demo_dir = base_dir / demo["dir"]
+
+        code, description, requirements = get_code_description_and_reqs(demo_dir)
+        demo["code"] = code.replace("# type: ignore", "")
         demo["text"] = description
-        demo["requirements"] = requirements 
+        demo["requirements"] = requirements
+
 
 def generate(json_path):
-    with open(json_path, 'w+') as f:
+    with open(json_path, "w+") as f:
         json.dump(demos_by_category, f)
+
+
+if __name__ == "__main__":
+    dest_path = WEBSITE_DIR / "src/lib/json/demos.json"
+    print(f"Generating {dest_path}")
+    generate(dest_path)

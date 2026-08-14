@@ -1,3 +1,4 @@
+# type: ignore
 import gradio as gr
 import pandas as pd
 from pathlib import Path
@@ -6,7 +7,6 @@ abs_path = Path(__file__).parent.absolute()
 
 df = pd.read_json(str(abs_path / "assets/leaderboard_data.json"))
 invisible_df = df.copy()
-
 
 COLS = [
     "T",
@@ -77,7 +77,6 @@ NUMERIC_INTERVALS = {
 MODEL_TYPE = [str(s) for s in df["T"].unique()]
 Precision = [str(s) for s in df["Precision"].unique()]
 
-
 # Searching and filtering
 def update_table(
     hidden_df: pd.DataFrame,
@@ -87,21 +86,18 @@ def update_table(
     size_query: list,
     query: str,
 ):
-    filtered_df = filter_models(hidden_df, type_query, size_query, precision_query)
+    filtered_df = filter_models(hidden_df, type_query, size_query, precision_query)  # type: ignore
     filtered_df = filter_queries(query, filtered_df)
     df = select_columns(filtered_df, columns)
     return df
 
-
 def search_table(df: pd.DataFrame, query: str) -> pd.DataFrame:
-    return df[(df["model_name_for_query"].str.contains(query, case=False))]
-
+    return df[(df["model_name_for_query"].str.contains(query, case=False))]  # type: ignore
 
 def select_columns(df: pd.DataFrame, columns: list) -> pd.DataFrame:
     # We use COLS to maintain sorting
     filtered_df = df[[c for c in COLS if c in df.columns and c in columns]]
-    return filtered_df
-
+    return filtered_df  # type: ignore
 
 def filter_queries(query: str, filtered_df: pd.DataFrame) -> pd.DataFrame:
     final_df = []
@@ -115,12 +111,11 @@ def filter_queries(query: str, filtered_df: pd.DataFrame) -> pd.DataFrame:
                     final_df.append(temp_filtered_df)
         if len(final_df) > 0:
             filtered_df = pd.concat(final_df)
-            filtered_df = filtered_df.drop_duplicates(
+            filtered_df = filtered_df.drop_duplicates(  # type: ignore
                 subset=["Model", "Precision", "Model sha"]
             )
 
     return filtered_df
-
 
 def filter_models(
     df: pd.DataFrame,
@@ -136,16 +131,15 @@ def filter_models(
     filtered_df = filtered_df.loc[df["Precision"].isin(precision_query + ["None"])]
 
     numeric_interval = pd.IntervalIndex(
-        sorted([NUMERIC_INTERVALS[s] for s in size_query])
+        sorted([NUMERIC_INTERVALS[s] for s in size_query])  # type: ignore
     )
     params_column = pd.to_numeric(df["#Params (B)"], errors="coerce")
-    mask = params_column.apply(lambda x: any(numeric_interval.contains(x)))
+    mask = params_column.apply(lambda x: any(numeric_interval.contains(x)))  # type: ignore
     filtered_df = filtered_df.loc[mask]
 
     return filtered_df
 
-
-demo = gr.Blocks(css=str(abs_path / "assets/leaderboard_data.json"))
+demo = gr.Blocks()
 with demo:
     gr.Markdown("""Test Space of the LLM Leaderboard""", elem_classes="markdown-text")
 
@@ -191,7 +185,7 @@ with demo:
                     )
 
             leaderboard_table = gr.components.Dataframe(
-                value=df[ON_LOAD_COLS],
+                value=df[ON_LOAD_COLS],  # type: ignore
                 headers=ON_LOAD_COLS,
                 datatype=TYPES,
                 elem_id="leaderboard-table",
@@ -202,7 +196,7 @@ with demo:
 
             # Dummy leaderboard for handling the case when the user uses backspace key
             hidden_leaderboard_table_for_search = gr.components.Dataframe(
-                value=invisible_df[COLS],
+                value=invisible_df[COLS],  # type: ignore
                 headers=COLS,
                 datatype=TYPES,
                 visible=False,
@@ -239,6 +233,5 @@ with demo:
                     queue=True,
                 )
 
-
 if __name__ == "__main__":
-    demo.queue(default_concurrency_limit=40).launch()
+    demo.queue(default_concurrency_limit=40).launch(css=str(abs_path / "assets/custom_css.css"))

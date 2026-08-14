@@ -1,16 +1,17 @@
 import importlib.resources
 import json
-import os
 import tempfile
 from copy import deepcopy
+from enum import Enum
 from pathlib import Path
+from typing import Any, Literal, Optional, Union
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-from huggingface_hub import HfFolder
+from huggingface_hub import get_token
 
-from gradio_client import media_data, utils
+from gradio_client import utils
 
 types = json.loads(importlib.resources.read_text("gradio_client", "types.json"))
 types["MultipleFile"] = {
@@ -18,27 +19,32 @@ types["MultipleFile"] = {
     "items": {"type": "string", "description": "filepath or URL to file"},
 }
 types["SingleFile"] = {"type": "string", "description": "filepath or URL to file"}
+types["FileWithAdditionalProperties"] = {"type": "object", "additionalProperties": True}
+HF_TOKEN = get_token()
 
 
-HF_TOKEN = os.getenv("HF_TOKEN") or HfFolder.get_token()
+class TestEnum(Enum):
+    VALUE1 = "option1"
+    VALUE2 = "option2"
+    VALUE3 = 42
 
 
-def test_encode_url_or_file_to_base64():
+def test_encode_url_or_file_to_base64(media_data):
     output_base64 = utils.encode_url_or_file_to_base64(
-        Path(__file__).parent / "../../../gradio/test_data/test_image.png"
+        Path(__file__).parents[3] / "gradio" / "test_data" / "test_image.png"
     )
     assert output_base64 == deepcopy(media_data.BASE64_IMAGE)
 
 
-def test_encode_file_to_base64():
+def test_encode_file_to_base64(media_data):
     output_base64 = utils.encode_file_to_base64(
-        Path(__file__).parent / "../../../gradio/test_data/test_image.png"
+        Path(__file__).parents[3] / "gradio" / "test_data" / "test_image.png"
     )
     assert output_base64 == deepcopy(media_data.BASE64_IMAGE)
 
 
 @pytest.mark.flaky
-def test_encode_url_to_base64():
+def test_encode_url_to_base64(media_data):
     output_base64 = utils.encode_url_to_base64(
         "https://raw.githubusercontent.com/gradio-app/gradio/main/gradio/test_data/test_image.png"
     )
@@ -53,7 +59,7 @@ def test_encode_url_to_base64_doesnt_encode_errors(monkeypatch):
         utils.encode_url_to_base64("https://example.com/foo")
 
 
-def test_decode_base64_to_binary():
+def test_decode_base64_to_binary(media_data):
     binary = utils.decode_base64_to_binary(deepcopy(media_data.BASE64_IMAGE))
     assert deepcopy(media_data.BINARY_IMAGE) == binary
 
@@ -66,23 +72,101 @@ def test_decode_base64_to_binary():
     assert extension is None
 
 
-def test_decode_base64_to_file():
+def test_decode_base64_to_file(media_data):
     temp_file = utils.decode_base64_to_file(deepcopy(media_data.BASE64_IMAGE))
     assert isinstance(temp_file, tempfile._TemporaryFileWrapper)
+
+
+@pytest.mark.parametrize(
+    "path_or_url, file_types, expected_result",
+    [
+        ("/home/user/documents/example.pdf", [".json", "text", ".mp3", ".pdf"], True),
+        ("C:\\Users\\user\\documents\\example.png", [".png"], True),
+        ("C:\\Users\\user\\documents\\example.png", ["image"], True),
+        ("C:\\Users\\user\\documents\\example.png", ["file"], True),
+        ("/home/user/documents/example.pdf", [".json", "text", ".mp3"], False),
+        ("https://example.com/avatar/xxxx.mp4", ["audio", ".png", ".jpg"], False),
+        # WebP support - case insensitive
+        ("/home/user/images/photo.webp", ["image"], True),
+        ("/home/user/images/photo.WEBP", ["image"], True),
+        ("/home/user/images/photo.WebP", ["image"], True),
+        ("C:\\Users\\user\\images\\photo.webp", ["image", "video"], True),
+        ("C:\\Users\\user\\images\\photo.WEBP", ["image", "video"], True),
+        # Compound extensions
+        ("/home/user/scans/brain.nii.gz", [".nii.gz"], True),
+        ("/home/user/scans/brain.NII.GZ", [".nii.gz"], True),
+        ("/home/user/scans/brain.nii.gz", [".nii"], False),
+        ("/home/user/scans/brain.nii", [".nii.gz"], False),
+        ("/home/user/archives/src.tar.gz", [".tar.gz"], True),
+        ("/home/user/archives/src.zip", [".tar.gz"], False),
+        ("/home/user/scans/brain.nii.gz", [".gz"], True),
+        ("/home/user/notes/my.js.txt", [".js"], False),
+        # A file whose whole name is the extension has no extension
+        ("/home/user/archives/.gz", [".gz"], False),
+        ("/home/user/scans/.nii.gz", [".nii.gz"], False),
+        ("/home/user/scans/nii.gz", [".nii.gz"], False),
+    ],
+)
+def test_is_valid_file_type(path_or_url, file_types, expected_result):
+    assert utils.is_valid_file(path_or_url, file_types) is expected_result
+
+
+@pytest.mark.parametrize(
+    "filename, expected_mimetype",
+    [
+        ("photo.webp", "image/webp"),
+        ("photo.WEBP", "image/webp"),
+        ("photo.WebP", "image/webp"),
+        ("video.vtt", "text/vtt"),
+        ("video.VTT", "text/vtt"),
+        ("image.png", "image/png"),
+    ],
+)
+def test_get_mimetype(filename, expected_mimetype):
+    assert utils.get_mimetype(filename) == expected_mimetype
 
 
 @pytest.mark.parametrize(
     "orig_filename, new_filename",
     [
         ("abc", "abc"),
-        ("$$AAabc&3", "AAabc3"),
-        ("$$AAabc&3", "AAabc3"),
-        ("$$AAa..b-c&3_", "AAa..b-c3_"),
-        ("$$AAa..b-c&3_", "AAa..b-c3_"),
+        ("$$AAabc&3", "AAabc&3"),
+        ("$$AAa&..b-c3_", "AAa&..b-c3_"),
+        ("#.txt", "#.txt"),
+        ("###.pdf", "###.pdf"),
+        ("@!$.csv", "@.csv"),
+        ("a#.txt", "a#.txt"),
+        # Path traversal characters are stripped
+        ("a/b\\c.txt", "abc.txt"),
+        ('a<b>c:"d.txt', "abcd.txt"),
+        ("a\x00b.txt", "ab.txt"),
+        # Shell-dangerous characters ($, !, {, }) are stripped; parentheses and brackets preserved
+        ("[{(Hunting's Shadowsl!)}].epub", "[(Hunting's Shadowsl)].epub"),
+        ("l!)}]test[{(.txt", "l)]test[(.txt"),
         (
             "ゆかりです｡私､こんなかわいい服は初めて着ました…｡なんだかうれしくって､楽しいです｡歌いたくなる気分って､初めてです｡これがｱｲﾄﾞﾙってことなのかもしれませんね",
-            "ゆかりです私こんなかわいい服は初めて着ましたなんだかうれしくって楽しいです歌いたくなる気分って初めてですこれがｱｲﾄﾞﾙってことなの",
+            "ゆかりです｡私､こんなかわいい服は初めて着ました…｡なんだかうれしくって､楽しいです｡歌いたくなる気分って､初めてです｡これがｱｲﾄ",
         ),
+        (
+            "Bringing-computational-thinking-into-classrooms-a-systematic-review-on-supporting-teachers-in-integrating-computational-thinking-into-K12-classrooms_2024_Springer-Science-and-Business-Media-Deutschland-GmbH.pdf",
+            "Bringing-computational-thinking-into-classrooms-a-systematic-review-on-supporting-teachers-in-integrating-computational-thinking-into-K12-classrooms_2024_Springer-Science-and-Business-Media-Deutsc.pdf",
+        ),
+        # Windows reserved device names must be rewritten so uploads work on NTFS
+        ("CON", "_CON"),
+        ("con.txt", "_con.txt"),
+        ("PRN.jpg", "_PRN.jpg"),
+        ("aux", "_aux"),
+        ("NUL.pdf", "_NUL.pdf"),
+        ("COM1", "_COM1"),
+        ("lpt9.dat", "_lpt9.dat"),
+        # Windows resolves device names from the segment before the first dot
+        ("CON.tar.gz", "_CON.tar.gz"),
+        ("nul.tar.gz", "_nul.tar.gz"),
+        # "$" is stripped as shell-dangerous first, which already defuses CONIN$/CONOUT$
+        ("CONOUT$.txt", "CONOUT.txt"),
+        ("COM\xb9.log", "_COM\xb9.log"),
+        ("config.txt", "config.txt"),
+        ("console.log", "console.log"),
     ],
 )
 def test_strip_invalid_filename_characters(orig_filename, new_filename):
@@ -92,34 +176,6 @@ def test_strip_invalid_filename_characters(orig_filename, new_filename):
 class AsyncMock(MagicMock):
     async def __call__(self, *args, **kwargs):
         return super().__call__(*args, **kwargs)
-
-
-@pytest.mark.asyncio
-async def test_get_pred_from_ws():
-    mock_ws = AsyncMock(name="ws")
-    messages = [
-        json.dumps({"msg": "estimation"}),
-        json.dumps({"msg": "send_data"}),
-        json.dumps({"msg": "process_generating"}),
-        json.dumps({"msg": "process_completed", "output": {"data": ["result!"]}}),
-    ]
-    mock_ws.recv.side_effect = messages
-    data = {"data": ["foo"], "fn_index": "foo"}
-    hash_data = {"session_hash": "daslskdf", "fn_index": "foo"}
-    output = await utils.get_pred_from_ws(mock_ws, data, hash_data)  # type: ignore
-    assert output == {"data": ["result!"]}
-    mock_ws.send.assert_called_once_with(data)
-
-
-@pytest.mark.asyncio
-async def test_get_pred_from_ws_raises_if_queue_full():
-    mock_ws = AsyncMock(name="ws")
-    messages = [json.dumps({"msg": "queue_full"})]
-    mock_ws.recv.side_effect = messages
-    data = json.dumps({"data": ["foo"], "fn_index": "foo"})
-    hash_data = json.dumps({"session_hash": "daslskdf", "fn_index": "foo"})
-    with pytest.raises(utils.QueueError, match="Queue is full!"):
-        await utils.get_pred_from_ws(mock_ws, data, hash_data)
 
 
 @patch("httpx.post")
@@ -143,7 +199,7 @@ def test_json_schema_to_python_type(schema):
     elif schema == "StringSerializable":
         answer = "str"
     elif schema == "ListStringSerializable":
-        answer = "List[str]"
+        answer = "list[str]"
     elif schema == "BooleanSerializable":
         answer = "bool"
     elif schema == "NumberSerializable":
@@ -151,22 +207,80 @@ def test_json_schema_to_python_type(schema):
     elif schema == "ImgSerializable":
         answer = "str"
     elif schema == "FileSerializable":
-        answer = "str | Dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file)) | List[str | Dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file))]"
+        answer = "str | dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file)) | list[str | dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file))]"
     elif schema == "JSONSerializable":
-        answer = "Dict[Any, Any]"
+        answer = "str | float | bool | list | dict"
     elif schema == "GallerySerializable":
-        answer = "Tuple[Dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file)), str | None]"
+        answer = "tuple[dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file)), str | None]"
     elif schema == "SingleFileSerializable":
-        answer = "str | Dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file))"
+        answer = "str | dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file))"
     elif schema == "MultipleFileSerializable":
-        answer = "List[str | Dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file))]"
+        answer = "list[str | dict(name: str (name of file), data: str (base64 representation of file), size: int (size of image in bytes), is_file: bool (true if the file has been uploaded to the server), orig_name: str (original name of the file))]"
     elif schema == "SingleFile":
         answer = "str"
     elif schema == "MultipleFile":
-        answer = "List[str]"
+        answer = "list[str]"
+    elif schema == "FileWithAdditionalProperties":
+        answer = "dict(str, Any)"
     else:
         raise ValueError(f"This test has not been modified to check {schema}")
     assert utils.json_schema_to_python_type(types[schema]) == answer
+
+
+@pytest.mark.parametrize(
+    "type_hint, expected_schema",
+    [
+        (str, {"type": "string"}),
+        (int, {"type": "integer"}),
+        (float, {"type": "number"}),
+        (bool, {"type": "boolean"}),
+        (type(None), {"type": "null"}),
+        (Any, {}),
+        (Union[str, int], {"anyOf": [{"type": "string"}, {"type": "integer"}]}),
+        (Optional[str], {"oneOf": [{"type": "null"}, {"type": "string"}]}),
+        (str | None, {"oneOf": [{"type": "null"}, {"type": "string"}]}),
+        (dict, {"type": "object", "additionalProperties": {}}),
+        (list, {"type": "array", "items": {}}),
+        (tuple, {"type": "array"}),
+        (set, {"type": "array", "uniqueItems": True}),
+        (frozenset, {"type": "array", "uniqueItems": True}),
+        (bytes, {"type": "string", "format": "byte"}),
+        (bytearray, {"type": "string", "format": "byte"}),
+        (TestEnum, {"enum": ["option1", "option2", 42]}),
+    ],
+)
+def test_python_type_to_json_schema(type_hint, expected_schema):
+    schema = utils.python_type_to_json_schema(type_hint)
+    assert schema == expected_schema
+
+
+@pytest.mark.parametrize(
+    "type_hint, expected_schema",
+    [
+        (tuple[int, ...], {"type": "array", "items": {"type": "integer"}}),
+        (
+            tuple[str, int],
+            {
+                "type": "array",
+                "prefixItems": [{"type": "string"}, {"type": "integer"}],
+                "minItems": 2,
+                "maxItems": 2,
+            },
+        ),
+        (set[str], {"type": "array", "uniqueItems": True, "items": {"type": "string"}}),
+        (
+            list[str | None],
+            {
+                "type": "array",
+                "items": {"oneOf": [{"type": "null"}, {"type": "string"}]},
+            },
+        ),
+        (Literal["a", "b", "c"], {"enum": ["a", "b", "c"]}),
+        (Literal["single"], {"const": "single"}),
+    ],
+)
+def test_python_type_to_json_schema_complex_nested_types(type_hint, expected_schema):
+    assert utils.python_type_to_json_schema(type_hint) == expected_schema
 
 
 class TestConstructArgs:

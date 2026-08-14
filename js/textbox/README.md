@@ -11,7 +11,7 @@ BaseTextbox
 	export let value = "";
 	export let value_is_output = false;
 	export let lines = 1;
-	export let placeholder = "Type here...";
+	export let placeholder = "";
 	export let label: string;
 	export let info: string | undefined = undefined;
 	export let disabled = false;
@@ -24,6 +24,7 @@ BaseTextbox
 	export let autofocus = false;
 	export let text_align: "left" | "right" | undefined = undefined;
 	export let autoscroll = true;
+	export let max_length: number | undefined = undefined;
 ```
 
 BaseExample

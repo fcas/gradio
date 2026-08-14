@@ -1,116 +1,77 @@
-<svelte:options accessors={true} />
-
 <script lang="ts">
-	import type { Gradio, ShareData } from "@gradio/utils";
-
-	import type { FileData } from "@gradio/client";
-	import type { LoadingStatus } from "@gradio/statustracker";
+	import { onMount, tick } from "svelte";
+	import { Gradio } from "@gradio/utils";
+	import { StatusTracker } from "@gradio/statustracker";
 
 	import StaticAudio from "./static/StaticAudio.svelte";
 	import InteractiveAudio from "./interactive/InteractiveAudio.svelte";
-	import { StatusTracker } from "@gradio/statustracker";
 	import { Block, UploadText } from "@gradio/atoms";
-	import type { WaveformOptions } from "./shared/types";
+	import type { AudioEvents, AudioProps } from "./shared/types";
 
-	export let elem_id = "";
-	export let elem_classes: string[] = [];
-	export let visible = true;
-	export let interactive: boolean;
-	export let value: null | FileData = null;
-	export let sources:
-		| ["microphone"]
-		| ["upload"]
-		| ["microphone", "upload"]
-		| ["upload", "microphone"];
-	export let label: string;
-	export let root: string;
-	export let show_label: boolean;
-	export let container = true;
-	export let scale: number | null = null;
-	export let min_width: number | undefined = undefined;
-	export let loading_status: LoadingStatus;
-	export let autoplay = false;
-	export let show_download_button: boolean;
-	export let show_share_button = false;
-	export let editable = true;
-	export let waveform_options: WaveformOptions = {};
-	export let pending: boolean;
-	export let streaming: boolean;
-	export let gradio: Gradio<{
-		change: typeof value;
-		stream: typeof value;
-		error: string;
-		warning: string;
-		edit: never;
-		play: never;
-		pause: never;
-		stop: never;
-		end: never;
-		start_recording: never;
-		pause_recording: never;
-		stop_recording: never;
-		upload: never;
-		clear: never;
-		share: ShareData;
-		clear_status: LoadingStatus;
-	}>;
+	let props = $props();
+	let upload_promise = $state<Promise<any>>();
 
-	let old_value: null | FileData = null;
+	props.props.stream_every = 0.1; // default to 0.1s stream interval
 
-	let active_source: "microphone" | "upload";
+	class AudioGradio extends Gradio<AudioEvents, AudioProps> {
+		async get_data() {
+			if (upload_promise) {
+				await upload_promise;
+				await tick();
+			}
 
-	let initial_value: null | FileData = value;
+			const data = await super.get_data();
 
-	$: if (value && initial_value === null) {
-		initial_value = value;
+			return data;
+		}
 	}
+
+	const gradio = new AudioGradio(props);
+	let label = $derived(gradio.shared.label || gradio.i18n("audio.audio"));
+	let minimal = $derived(
+		(props as any).minimal ?? (gradio.props as any).minimal ?? false
+	);
+
+	let active_source = $derived.by(() =>
+		gradio.props.sources ? gradio.props.sources[0] : null
+	);
+	let initial_value = $state(gradio.props.value);
 
 	const handle_reset_value = (): void => {
-		if (initial_value === null || value === initial_value) {
+		if (initial_value === null || gradio.props.value === initial_value) {
 			return;
 		}
-
-		value = initial_value;
+		gradio.props.value = initial_value;
 	};
 
-	$: {
-		if (JSON.stringify(value) !== JSON.stringify(old_value)) {
-			old_value = value;
-			gradio.dispatch("change");
-		}
-	}
+	let dragging = $state(false);
+	let recording = $state(gradio.props.recording ?? false);
+	$effect(() => {
+		gradio.props.recording = recording;
+	});
 
-	let dragging: boolean;
+	let color_accent = "darkorange";
 
-	$: if (!active_source && sources) {
-		active_source = sources[0];
-	}
-
-	let waveform_settings: Record<string, any>;
-
-	let color_accent = getComputedStyle(
-		document.documentElement
-	).getPropertyValue("--color-accent");
-
-	$: waveform_settings = {
+	let waveform_settings = $state({
 		height: 50,
-		waveColor: waveform_options.waveform_color || "#9ca3af",
-		progressColor: waveform_options.waveform_progress_color || color_accent,
 		barWidth: 2,
 		barGap: 3,
 		cursorWidth: 2,
 		cursorColor: "#ddd5e9",
-		autoplay: autoplay,
+		autoplay: gradio.props.autoplay,
 		barRadius: 10,
 		dragToSeek: true,
 		normalize: true,
 		minPxPerSec: 20,
-		mediaControls: waveform_options.show_controls,
-		sampleRate: waveform_options.sample_rate || 44100
-	};
+		waveColor: gradio.props.waveform_options.waveform_color || "#9ca3af",
+		progressColor:
+			gradio.props.waveform_options.waveform_progress_color || color_accent,
+		mediaControls: gradio.props.waveform_options.show_controls ?? false,
+		sampleRate: gradio.props.waveform_options.sample_rate || 44100
+	});
 
 	const trim_region_settings = {
-		color: waveform_options.trim_region_color,
+		color: gradio.props.waveform_options.trim_region_color,
 		drag: true,
 		resize: true
 	};
@@ -122,111 +83,148 @@
 		);
 	}
 
-	set_trim_region_colour();
-
-	function handle_error({ detail }: CustomEvent<string>): void {
+	function handle_error(detail: string): void {
 		const [level, status] = detail.includes("Invalid file type")
 			? ["warning", "complete"]
 			: ["error", "error"];
-		loading_status = loading_status || {};
-		loading_status.status = status as LoadingStatus["status"];
-		loading_status.message = detail;
+		if (gradio.shared.loading_status) {
+			(gradio.shared.loading_status as any).status = status;
+			(gradio.shared.loading_status as any).message = detail;
+		}
 		gradio.dispatch(level as "error" | "warning", detail);
 	}
+
+	gradio.watch_for_change();
+
+	onMount(() => {
+		set_trim_region_colour();
+	});
 </script>
 
-{#if !interactive}
+{#if !gradio.shared.interactive}
 	<Block
 		variant={"solid"}
 		border_mode={dragging ? "focus" : "base"}
 		padding={false}
 		allow_overflow={false}
-		{elem_id}
-		{elem_classes}
-		{visible}
-		{container}
-		{scale}
-		{min_width}
+		elem_id={gradio.shared.elem_id}
+		elem_classes={gradio.shared.elem_classes}
+		visible={gradio.shared.visible}
+		container={gradio.shared.container}
+		scale={gradio.shared.scale}
+		min_width={gradio.shared.min_width}
 	>
 		<StatusTracker
-			autoscroll={gradio.autoscroll}
+			autoscroll={gradio.shared.autoscroll}
 			i18n={gradio.i18n}
-			{...loading_status}
-			on:clear_status={() => gradio.dispatch("clear_status", loading_status)}
+			{...gradio.shared.loading_status}
+			on_clear_status={() =>
+				gradio.dispatch("clear_status", gradio.shared.loading_status)}
 		/>
 
 		<StaticAudio
 			i18n={gradio.i18n}
-			{show_label}
-			{show_download_button}
-			{show_share_button}
-			{value}
+			show_label={gradio.shared.show_label}
+			buttons={gradio.props.buttons ?? ["download", "share"]}
+			value={gradio.props.value}
+			subtitles={gradio.props.subtitles}
 			{label}
+			loop={gradio.props.loop}
 			{waveform_settings}
-			{waveform_options}
-			{editable}
-			on:share={(e) => gradio.dispatch("share", e.detail)}
-			on:error={(e) => gradio.dispatch("error", e.detail)}
-			on:play={() => gradio.dispatch("play")}
-			on:pause={() => gradio.dispatch("pause")}
-			on:stop={() => gradio.dispatch("stop")}
+			waveform_options={gradio.props.waveform_options}
+			editable={gradio.props.editable}
+			{minimal}
+			on_custom_button_click={(id) => {
+				gradio.dispatch("custom_button_click", { id });
+			}}
+			bind:playback_position={gradio.props.playback_position}
+			onshare={(detail) => gradio.dispatch("share", detail)}
+			onerror={(e) => gradio.dispatch("error", e.detail)}
+			onplay={() => gradio.dispatch("play")}
+			onpause={() => gradio.dispatch("pause")}
+			onstop={() => gradio.dispatch("stop")}
 		/>
 	</Block>
 {:else}
 	<Block
-		variant={value === null && active_source === "upload" ? "dashed" : "solid"}
+		variant={gradio.props.value === null && active_source === "upload"
+			? "dashed"
+			: "solid"}
 		border_mode={dragging ? "focus" : "base"}
 		padding={false}
 		allow_overflow={false}
-		{elem_id}
-		{elem_classes}
-		{visible}
-		{container}
-		{scale}
-		{min_width}
+		elem_id={gradio.shared.elem_id}
+		elem_classes={gradio.shared.elem_classes}
+		visible={gradio.shared.visible}
+		container={gradio.shared.container}
+		scale={gradio.shared.scale}
+		min_width={gradio.shared.min_width}
 	>
 		<StatusTracker
-			autoscroll={gradio.autoscroll}
+			autoscroll={gradio.shared.autoscroll}
 			i18n={gradio.i18n}
-			{...loading_status}
-			on:clear_status={() => gradio.dispatch("clear_status", loading_status)}
+			{...gradio.shared.loading_status}
+			on_clear_status={() =>
+				gradio.dispatch("clear_status", gradio.shared.loading_status)}
 		/>
 		<InteractiveAudio
+			bind:upload_promise
+			bind:initial_value
 			{label}
-			{show_label}
-			{show_download_button}
-			{value}
-			on:change={({ detail }) => (value = detail)}
-			on:stream={({ detail }) => {
-				value = detail;
-				gradio.dispatch("stream", value);
+			show_label={gradio.shared.show_label}
+			buttons={gradio.props.buttons ?? []}
+			on_custom_button_click={(id) => {
+				gradio.dispatch("custom_button_click", { id });
 			}}
-			on:drag={({ detail }) => (dragging = detail)}
-			{root}
-			{sources}
-			{active_source}
-			{pending}
-			{streaming}
-			max_file_size={gradio.max_file_size}
+			value={gradio.props.value}
+			subtitles={gradio.props.subtitles}
+			onchange={(detail) => (gradio.props.value = detail)}
+			onstream={(detail) => {
+				gradio.props.value = detail;
+				gradio.dispatch("stream", gradio.props.value);
+			}}
+			ondrag={(detail) => (dragging = detail)}
+			root={gradio.shared.root}
+			sources={gradio.props.sources}
+			active_source={active_source || undefined}
+			pending={gradio.shared.loading_status.pending}
+			streaming={gradio.props.streaming}
+			bind:recording
+			loop={gradio.props.loop}
+			max_file_size={gradio.shared.max_file_size}
 			{handle_reset_value}
-			{editable}
+			editable={gradio.props.editable}
 			bind:dragging
-			on:edit={() => gradio.dispatch("edit")}
-			on:play={() => gradio.dispatch("play")}
-			on:pause={() => gradio.dispatch("pause")}
-			on:stop={() => gradio.dispatch("stop")}
-			on:start_recording={() => gradio.dispatch("start_recording")}
-			on:pause_recording={() => gradio.dispatch("pause_recording")}
-			on:stop_recording={(e) => gradio.dispatch("stop_recording")}
-			on:upload={() => gradio.dispatch("upload")}
-			on:clear={() => gradio.dispatch("clear")}
-			on:error={handle_error}
+			bind:playback_position={gradio.props.playback_position}
+			onedit={() => gradio.dispatch("edit")}
+			onplay={() => gradio.dispatch("play")}
+			onpause={() => gradio.dispatch("pause")}
+			onstop={() => gradio.dispatch("stop")}
+			onstart_recording={() => gradio.dispatch("start_recording")}
+			onpause_recording={() => gradio.dispatch("pause_recording")}
+			onstop_recording={() => {
+				gradio.dispatch("stop_recording");
+				gradio.dispatch("input");
+			}}
+			onupload={() => {
+				gradio.dispatch("upload");
+				gradio.dispatch("input");
+			}}
+			onclear={() => {
+				gradio.dispatch("clear");
+				gradio.dispatch("input");
+			}}
+			onerror={handle_error}
+			onclose_stream={() => gradio.dispatch("close_stream", "stream")}
 			i18n={gradio.i18n}
 			{waveform_settings}
-			{waveform_options}
+			waveform_options={gradio.props.waveform_options}
 			{trim_region_settings}
-			upload={gradio.client.upload}
-			stream_handler={gradio.client.stream}
+			stream_every={gradio.props.stream_every}
+			stream_state={gradio.shared.loading_status.stream_state}
+			upload={(...args) => gradio.shared.client.upload(...args)}
+			stream_handler={(...args) => gradio.shared.client.stream(...args)}
+			time_limit={gradio.shared.loading_status.time_limit}
 		>
 			<UploadText i18n={gradio.i18n} type="audio" />
 		</InteractiveAudio>

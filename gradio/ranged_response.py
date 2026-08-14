@@ -8,13 +8,14 @@ import stat
 from typing import NamedTuple
 from urllib.parse import quote
 
-import aiofiles
-from aiofiles.os import stat as aio_stat
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
-from starlette.responses import Response, guess_type
+from starlette.responses import Response, guess_type  # type: ignore
 from starlette.staticfiles import StaticFiles
 from starlette.types import Receive, Scope, Send
+
+from gradio._vendor import aiofiles
+from gradio._vendor.aiofiles.os import stat as aio_stat
 
 RANGE_REGEX = re.compile(r"^bytes=(?P<start>\d+)-(?P<end>\d*)$")
 
@@ -23,7 +24,7 @@ class ClosedRange(NamedTuple):
     start: int
     end: int
 
-    def __len__(self) -> int:
+    def __len__(self) -> int:  # type: ignore[override]
         return self.end - self.start + 1
 
     def __bool__(self) -> bool:

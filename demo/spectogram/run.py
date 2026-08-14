@@ -1,9 +1,8 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy import signal
+from scipy import signal  # ty: ignore[unresolved-import]
 
 import gradio as gr
-
 
 def spectrogram(audio):
     sr, data = audio
@@ -15,8 +14,7 @@ def spectrogram(audio):
     plt.pcolormesh(times, frequencies, np.log10(spectrogram_data))
     return plt
 
-
-demo = gr.Interface(spectrogram, "audio", "plot")
+demo = gr.Interface(spectrogram, "audio", "plot", api_name="predict")
 
 if __name__ == "__main__":
     demo.launch()

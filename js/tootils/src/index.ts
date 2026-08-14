@@ -1,11 +1,10 @@
-import { test as base, type Page } from "@playwright/test";
-import { spy } from "tinyspy";
+import { test as base, type Locator, type Page } from "@playwright/test";
 import url from "url";
 import path from "path";
 import fsPromises from "fs/promises";
+import type { ChildProcess } from "node:child_process";
 
-import type { SvelteComponent } from "svelte";
-import type { SpyFn } from "tinyspy";
+import { launchGradioApp, killGradioApp, hasTestcase } from "./app-launcher";
 
 export function get_text<T extends HTMLElement>(el: T): string {
 	return el.innerText.trim();
@@ -20,129 +19,147 @@ const ROOT_DIR = path.resolve(
 	"../../../.."
 );
 
-const is_lite = !!process.env.GRADIO_E2E_TEST_LITE;
+// Extract testcase name from test title if present
+// Test titles can be:
+//   - "case eager_caching_examples: ..."
+//   - "test case multimodal_messages chatinterface works..."
+function extractTestcaseFromTitle(
+	title: string,
+	demoName: string
+): string | undefined {
+	// Try pattern: "case <name>:" or "test case <name> "
+	const patterns = [/^case\s+(\w+):/, /^test case\s+(\w+)\s/];
 
+	for (const pattern of patterns) {
+		const match = title.match(pattern);
+		if (match) {
+			const caseName = match[1];
+			// Check if this is a testcase (not the main demo)
+			if (hasTestcase(demoName, caseName)) {
+				return caseName;
+			}
+		}
+	}
+	return undefined;
+}
+
+// Cache for launched apps - key is "demoName" or "demoName_testcaseName"
+const appCache = new Map<
+	string,
+	{ port: number; process: ChildProcess; refCount: number }
+>();
+
+// Track the cacheKey of the currently-running spec file so we can kill the
+// previous spec's gradio app when the worker moves on. Without this, every
+// app spawned during a worker's lifetime stayed resident until process exit
+// (~50 python procs / 5GB RSS by end of suite — the tail of the run starved
+// for CPU and tests timed out).
+let currentCacheKey: string | null = null;
+
+function killAndEvict(cacheKey: string): void {
+	const info = appCache.get(cacheKey);
+	if (!info) return;
+	killGradioApp(info.process);
+	appCache.delete(cacheKey);
+}
+
+// Test fixture that launches Gradio app per test
 const test_normal = base.extend<{ setup: void }>({
 	setup: [
 		async ({ page }, use, testInfo): Promise<void> => {
-			const port = process.env.GRADIO_E2E_TEST_PORT;
-			const { file } = testInfo;
-			const test_name = path.basename(file, ".spec.ts");
+			const { file, title } = testInfo;
+			const demoName = path.basename(file, ".spec.ts");
 
-			await page.goto(`localhost:${port}/${test_name}`);
+			// Check if this is a reload test (they manage their own apps)
+			if (demoName.endsWith(".reload")) {
+				// For reload tests, don't launch an app - they handle it themselves
+				await use();
+				return;
+			}
 
-			await use();
-		},
-		{ auto: true }
-	]
-});
+			// Check if this test is for a specific testcase
+			const testcaseName = extractTestcaseFromTitle(title, demoName);
 
-const lite_url = "http://localhost:8000/for_e2e.html";
-// LIte taks a long time to initialize, so we share the page across tests, sacrificing the test isolation.
-let shared_page_for_lite: Page;
-const test_lite = base.extend<{ setup: void }>({
-	page: async ({ browser }, use, testInfo) => {
-		if (shared_page_for_lite == null) {
-			shared_page_for_lite = await browser.newPage();
-		}
-		if (shared_page_for_lite.url() !== lite_url) {
-			await shared_page_for_lite.goto(lite_url);
-			testInfo.setTimeout(600000); // Lite takes a long time to initialize.
-		}
-		await use(shared_page_for_lite);
-	},
-	setup: [
-		async ({ page }, use, testInfo) => {
-			const { file } = testInfo;
+			// Cache key includes testcase if present
+			const cacheKey = testcaseName ? `${demoName}_${testcaseName}` : demoName;
 
-			console.debug("\nSetting up a test in lite mode", file);
-			const test_name = path.basename(file, ".spec.ts");
-			const demo_dir = path.resolve(ROOT_DIR, `./demo/${test_name}`);
-			const demo_file_paths = await fsPromises
-				.readdir(demo_dir, { withFileTypes: true, recursive: true })
-				.then((dirents) =>
-					dirents.filter(
-						(dirent) =>
-							dirent.isFile() &&
-							!dirent.name.endsWith(".ipynb") &&
-							!dirent.name.endsWith(".pyc")
+			// First test of a new spec file → previous file's app is no longer
+			// needed on this worker. fullyParallel=false in playwright.config
+			// guarantees a worker finishes a file before starting the next, so
+			// the kill is unconditional on the transition (we don't gate on
+			// refCount: a throw before `await use()` — e.g. a flaky SSR
+			// hydration wait — can leak refCount, which would otherwise pin
+			// the previous spec's app forever).
+			if (currentCacheKey !== null && currentCacheKey !== cacheKey) {
+				killAndEvict(currentCacheKey);
+			}
+			currentCacheKey = cacheKey;
+
+			let appInfo = appCache.get(cacheKey);
+
+			if (!appInfo) {
+				// Launch the app for this test
+				const workerIndex = testInfo.workerIndex;
+				try {
+					const { port, process } = await launchGradioApp(
+						demoName,
+						workerIndex,
+						60000,
+						testcaseName
+					);
+					appInfo = { port, process, refCount: 0 };
+					appCache.set(cacheKey, appInfo);
+				} catch (error) {
+					console.error(`Failed to launch app for ${cacheKey}:`, error);
+					throw error;
+				}
+			}
+
+			try {
+				// Navigate to the app
+				await page.goto(`http://localhost:${appInfo.port}`);
+
+				if (
+					process.env?.GRADIO_SSR_MODE?.toLowerCase() === "true" &&
+					!(
+						demoName.includes("multipage") ||
+						demoName.includes("chatinterface_deep_link")
 					)
-				)
-				.then((dirents) =>
-					dirents.map((dirent) => path.join(dirent.path, dirent.name))
-				);
-			const demo_files = await Promise.all(
-				demo_file_paths.map(async (filepath) => {
-					const relpath = path.relative(demo_dir, filepath);
-					const buffer = await fsPromises.readFile(filepath);
-					return [
-						relpath,
-						buffer.toString("base64") // To pass to the browser, we need to convert the buffer to base64.
-					];
-				})
-			);
+				) {
+					await page.waitForSelector("#svelte-announcer");
+				}
+				await page.waitForLoadState("load");
 
-			// Mount the demo files and run the app in the mounted Gradio-lite app via its controller.
-			const controllerHandle = await page.waitForFunction(
-				// @ts-ignore
-				() => window.controller // This controller object is set in the dev app.
-			);
-			console.debug("Controller obtained. Setting up the app.");
-			await controllerHandle.evaluate(
-				async (controller: any, files: string[][]) => {
-					function base64ToUint8Array(base64: string): Uint8Array {
-						// Ref: https://stackoverflow.com/a/21797381/13103190
-						const binaryString = atob(base64);
-						const bytes = new Uint8Array(binaryString.length);
-						for (var i = 0; i < binaryString.length; i++) {
-							bytes[i] = binaryString.charCodeAt(i);
-						}
-						return bytes;
-					}
-
-					for (const [filepath, data_b64] of files) {
-						const data = base64ToUint8Array(data_b64);
-						if (filepath === "requirements.txt") {
-							const text = new TextDecoder().decode(data);
-							const requirements = text
-								.split("\n")
-								.map((line) => line.trim())
-								.filter((line) => line);
-
-							await controller.install(requirements);
-						} else {
-							await controller.write(filepath, data, {});
-						}
-					}
-
-					await controller.run_file("run.py");
-				},
-				demo_files
-			);
-
-			console.debug("App setup done. Starting the test,", test_name, "\n");
-			await use();
-
-			controllerHandle.dispose();
+				await use();
+			} finally {
+			}
 		},
 		{ auto: true }
 	]
 });
 
-export const test = is_lite ? test_lite : test_normal;
+// Cleanup apps when the process exits
+process.on("exit", () => {
+	for (const [, appInfo] of appCache) {
+		killGradioApp(appInfo.process);
+	}
+});
 
-export async function wait_for_event(
-	component: SvelteComponent,
-	event: string
-): Promise<SpyFn> {
-	const mock = spy();
-	return new Promise((res) => {
-		component.$on(event, () => {
-			mock();
-			res(mock);
-		});
-	});
-}
+process.on("SIGINT", () => {
+	for (const [, appInfo] of appCache) {
+		killGradioApp(appInfo.process);
+	}
+	process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+	for (const [, appInfo] of appCache) {
+		killGradioApp(appInfo.process);
+	}
+	process.exit(0);
+});
+
+export const test = test_normal;
 
 export interface ActionReturn<
 	Parameter = never,
@@ -159,33 +176,53 @@ export interface ActionReturn<
 }
 
 export { expect } from "@playwright/test";
-export * from "./render";
 
 export const drag_and_drop_file = async (
 	page: Page,
-	selector: string,
+	selector: string | Locator,
 	filePath: string,
 	fileName: string,
-	fileType = ""
+	fileType = "",
+	count = 1
 ): Promise<void> => {
 	const buffer = (await fsPromises.readFile(filePath)).toString("base64");
 
 	const dataTransfer = await page.evaluateHandle(
-		async ({ bufferData, localFileName, localFileType }) => {
+		async ({ bufferData, localFileName, localFileType, count }) => {
 			const dt = new DataTransfer();
 
 			const blobData = await fetch(bufferData).then((res) => res.blob());
 
-			const file = new File([blobData], localFileName, { type: localFileType });
-			dt.items.add(file);
+			const file = new File([blobData], localFileName, {
+				type: localFileType
+			});
+
+			for (let i = 0; i < count; i++) {
+				dt.items.add(file);
+			}
 			return dt;
 		},
 		{
 			bufferData: `data:application/octet-stream;base64,${buffer}`,
 			localFileName: fileName,
-			localFileType: fileType
+			localFileType: fileType,
+			count
 		}
 	);
 
-	await page.dispatchEvent(selector, "drop", { dataTransfer });
+	if (typeof selector === "string") {
+		await page.dispatchEvent(selector, "drop", { dataTransfer });
+	} else {
+		await selector.dispatchEvent("drop", { dataTransfer });
+	}
 };
+
+export async function go_to_testcase(
+	page: Page,
+	_test_case: string
+): Promise<void> {
+	// With the new setup, each testcase launches its own Gradio app.
+	// The fixture detects the testcase from the test title and launches
+	// the correct app, so this function is now a no-op.
+	// The page is already at the correct testcase app.
+}

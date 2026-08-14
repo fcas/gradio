@@ -1,18 +1,30 @@
 <script lang="ts">
 	import type { I18nFormatter } from "@gradio/utils";
 	import { Upload as UploadIcon, ImagePaste } from "@gradio/icons";
-	export let type:
-		| "video"
-		| "image"
-		| "audio"
-		| "file"
-		| "csv"
-		| "clipboard"
-		| "gallery" = "file";
-	export let i18n: I18nFormatter;
-	export let message: string | undefined = undefined;
-	export let mode: "full" | "short" = "full";
-	export let hovered = false;
+	import { inject } from "./utils/parse_placeholder";
+
+	let {
+		type = "file",
+		i18n,
+		message = undefined,
+		mode = "full",
+		hovered = false,
+		placeholder = undefined
+	}: {
+		type?:
+			| "video"
+			| "image"
+			| "audio"
+			| "file"
+			| "csv"
+			| "clipboard"
+			| "gallery";
+		i18n: I18nFormatter;
+		message?: string | undefined;
+		mode?: "full" | "short";
+		hovered?: boolean;
+		placeholder?: string | undefined;
+	} = $props();
 
 	const defs = {
 		image: "upload_text.drop_image",
@@ -23,6 +35,12 @@
 		gallery: "upload_text.drop_gallery",
 		clipboard: "upload_text.paste_clipboard"
 	};
+
+	let parsed_placeholder = $derived<[string | false, string | false]>(
+		placeholder ? inject(placeholder) : [false, false]
+	);
+	let heading = $derived(parsed_placeholder[0]);
+	let paragraph = $derived(parsed_placeholder[1]);
 </script>
 
 <div class="wrap">
@@ -34,15 +52,33 @@
 		{/if}
 	</span>
 
-	{i18n(defs[type] || defs.file)}
+	{#if heading || paragraph}
+		{#if heading}
+			<h2>{heading}</h2>
+		{/if}
+		{#if paragraph}
+			<p>{paragraph}</p>
+		{/if}
+	{:else}
+		{i18n(defs[type] || defs.file)}
 
-	{#if mode !== "short"}
-		<span class="or">- {i18n("common.or")} -</span>
-		{message || i18n("upload_text.click_to_upload")}
+		{#if mode !== "short"}
+			<span class="or">- {i18n("common.or")} -</span>
+			{message || i18n("upload_text.click_to_upload")}
+		{/if}
 	{/if}
 </div>
 
 <style>
+	h2 {
+		font-size: var(--text-xl) !important;
+	}
+
+	p,
+	h2 {
+		white-space: pre-line;
+	}
+
 	.wrap {
 		display: flex;
 		flex-direction: column;
@@ -53,6 +89,8 @@
 		line-height: var(--line-md);
 		height: 100%;
 		padding-top: var(--size-3);
+		text-align: center;
+		margin: auto var(--spacing-lg);
 	}
 
 	.or {

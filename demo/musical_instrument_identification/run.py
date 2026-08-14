@@ -1,9 +1,9 @@
 import gradio as gr
 import torch
-import torchaudio
+import torchaudio  # type: ignore
 from timeit import default_timer as timer
-from data_setups import audio_preprocess, resample
-import gdown
+from data_setups import audio_preprocess, resample  # type: ignore
+import gdown  # type: ignore
 
 url = 'https://drive.google.com/uc?id=1X5CR18u0I-ZOi_8P0cNptCe5JGk9Ro0C'
 output = 'piano.wav'
@@ -21,7 +21,6 @@ LABELS = [
 example_list = [
     ["piano.wav"]
 ]
-
 
 def predict(audio_path):
     start_time = timer()
@@ -42,10 +41,11 @@ def predict(audio_path):
 
 demo = gr.Interface(fn=predict,
                     inputs=gr.Audio(type="filepath"),
-                    outputs=[gr.Label(num_top_classes=11, label="Predictions"), 
+                    outputs=[gr.Label(num_top_classes=11, label="Predictions"),
                              gr.Number(label="Prediction time (s)")],
                     examples=example_list,
-                    cache_examples=False
+                    cache_examples=False,
+                    api_name="predict"
                     )
 
 demo.launch(debug=False)

@@ -1,6 +1,6 @@
 {
 	"name": "@gradio/json",
-	"version": "0.2.4",
+	"version": "0.8.2",
 	"description": "Gradio UI packages",
 	"type": "module",
 	"author": "",
@@ -18,7 +18,24 @@
 	"main": "./Index.svelte",
 	"main_changeset": true,
 	"exports": {
-		".": "./Index.svelte",
+		".": {
+			"gradio": "./Index.svelte",
+			"svelte": "./dist/Index.svelte",
+			"types": "./dist/Index.svelte.d.ts"
+		},
+		"./example": {
+			"gradio": "./Example.svelte",
+			"svelte": "./dist/Example.svelte",
+			"types": "./dist/Example.svelte.d.ts"
+		},
 		"./package.json": "./package.json"
+	},
+	"peerDependencies": {
+		"svelte": "^5.48.0"
+	},
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/gradio-app/gradio.git",
+		"directory": "js/json"
 	}
 }

@@ -3,12 +3,19 @@
 	import { playable } from "./shared/utils";
 	import { type FileData } from "@gradio/client";
 
-	export let type: "gallery" | "table";
-	export let selected = false;
-	export let value: { video: FileData; subtitles: FileData | null } | null;
-	let video: HTMLVideoElement;
+	interface Props {
+		type: "gallery" | "table";
+		selected?: boolean;
+		value?: null | FileData;
+		loop: boolean;
+	}
+
+	let { type, selected = false, value = null, loop }: Props = $props();
+
+	let video: HTMLVideoElement | undefined = $state();
 
 	async function init(): Promise<void> {
+		if (!video) return;
 		video.muted = true;
 		video.playsInline = true;
 		video.controls = false;
@@ -31,10 +38,12 @@
 				muted
 				playsinline
 				bind:node={video}
-				on:loadeddata={init}
-				on:mouseover={video.play.bind(video)}
-				on:mouseout={video.pause.bind(video)}
-				src={value?.video.url}
+				onloadeddata={init}
+				onmouseover={() => video?.play()}
+				onmouseout={() => video?.pause()}
+				src={value?.url}
+				is_stream={false}
+				{loop}
 			/>
 		</div>
 	{:else}

@@ -41,7 +41,9 @@ export function loaded(
 
 export default async function loadFfmpeg(): Promise<FFmpeg> {
 	const ffmpeg = new FFmpeg();
-	const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.4/dist/esm";
+	const root =
+		(typeof window !== "undefined" && window.gradio_config?.root) || "";
+	const baseURL = `${root}/static/ffmpeg`;
 
 	await ffmpeg.load({
 		coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
@@ -97,7 +99,9 @@ export async function trimVideo(
 
 		await ffmpeg.exec(command);
 		const outputData = await ffmpeg.readFile(outputName);
-		const outputBlob = new Blob([outputData], {
+		const outputBytes =
+			typeof outputData === "string" ? outputData : new Uint8Array(outputData);
+		const outputBlob = new Blob([outputBytes], {
 			type: `video/${type}`
 		});
 
@@ -144,3 +148,8 @@ const getVideoExtensionFromMimeType = (mimeType: string): string | null => {
 
 	return videoMimeToExtensionMap[mimeType] || null;
 };
+
+export interface WebcamOptions {
+	mirror: boolean;
+	constraints: Record<string, any>;
+}

@@ -1,16 +1,40 @@
 <script lang="ts">
-	export let open = true;
-	export let label = "";
+	import type { Snippet } from "svelte";
+
+	let {
+		open = $bindable(true),
+		label = "",
+		onexpand,
+		oncollapse,
+		children
+	}: {
+		open: boolean;
+		label: string;
+		onexpand?: () => void;
+		oncollapse?: () => void;
+		children?: Snippet;
+	} = $props();
 </script>
 
-<button on:click={() => (open = !open)} class="label-wrap" class:open>
+<button
+	onclick={() => {
+		open = !open;
+		if (open) {
+			onexpand?.();
+		} else {
+			oncollapse?.();
+		}
+	}}
+	class="label-wrap"
+	class:open
+>
 	<span>{label}</span>
 	<span style:transform={open ? "rotate(0)" : "rotate(90deg)"} class="icon">
 		▼
 	</span>
 </button>
-<div style:display={open ? "block" : "none"}>
-	<slot />
+<div data-testid="accordion-content" style:display={open ? "block" : "none"}>
+	{@render children?.()}
 </div>
 
 <style>
@@ -23,6 +47,7 @@
 		justify-content: space-between;
 		cursor: pointer;
 		width: var(--size-full);
+		color: var(--accordion-text-color);
 	}
 	.label-wrap.open {
 		margin-bottom: var(--size-2);

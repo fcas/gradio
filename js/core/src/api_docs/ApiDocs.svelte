@@ -1,0 +1,854 @@
+<script lang="ts">
+	import { onMount } from "svelte";
+	import type { ComponentMeta, Dependency } from "../types";
+	import NoApi from "./NoApi.svelte";
+	import type { Client } from "@gradio/client";
+	import type { Payload } from "../types";
+
+	import ApiBanner from "./ApiBanner.svelte";
+	import { BaseButton as Button } from "@gradio/button";
+	import ParametersSnippet from "./ParametersSnippet.svelte";
+	import OAuthTokenSnippet from "./OAuthTokenSnippet.svelte";
+	import InstallSnippet from "./InstallSnippet.svelte";
+	import CodeSnippet from "./CodeSnippet.svelte";
+	import RecordingSnippet from "./RecordingSnippet.svelte";
+	import CopyButton from "./CopyButton.svelte";
+	import { Block } from "@gradio/atoms";
+
+	import python from "./img/python.svg";
+	import javascript from "./img/javascript.svg";
+	import bash from "./img/bash.svg";
+	import ResponseSnippet from "./ResponseSnippet.svelte";
+	import skill from "./img/skill.svg";
+	import SkillSnippet from "./SkillSnippet.svelte";
+	import mcp from "./img/mcp.svg";
+	import agent from "./img/agent.svg";
+	import hf_logo from "./img/hf-logo.svg";
+	import gradio_logo from "../images/logo.svg";
+	import MCPSnippet from "./MCPSnippet.svelte";
+	import CopyMarkdown from "./CopyMarkdown.svelte";
+
+	let {
+		dependencies,
+		root = $bindable(),
+		app,
+		space_id,
+		root_node,
+		username,
+		last_api_call = null,
+		api_calls = [],
+		onclose
+	}: {
+		dependencies: Dependency[];
+		root: string;
+		app: Awaited<ReturnType<typeof Client.connect>>;
+		space_id: string | null;
+		root_node: ComponentMeta;
+		username: string | null;
+		last_api_call?: Payload | null;
+		api_calls?: Payload[];
+		onclose?: (detail?: { api_recorder_visible: boolean }) => void;
+	} = $props();
+
+	const js_docs =
+		"https://www.gradio.app/guides/getting-started-with-the-js-client";
+	const py_docs =
+		"https://www.gradio.app/guides/getting-started-with-the-python-client";
+	const bash_docs =
+		"https://www.gradio.app/guides/querying-gradio-apps-with-curl";
+	const spaces_docs_suffix = "#connecting-to-a-hugging-face-space";
+	const mcp_docs =
+		"https://www.gradio.app/guides/building-mcp-server-with-gradio";
+
+	let api_count = dependencies.filter(
+		(dependency) => dependency.api_visibility === "public"
+	).length;
+
+	if (root === "") {
+		root = location.protocol + "//" + location.host + location.pathname;
+	}
+	if (!root.endsWith("/")) {
+		root += "/";
+	}
+
+	let current_language:
+		| "python"
+		| "javascript"
+		| "bash"
+		| "skill"
+		| "mcp"
+		| "cli" = $state("python");
+
+	let cli_flavor = $state<"hf" | "gradio">("gradio");
+
+	let cli_command = $derived(cli_flavor === "hf" ? "hf gradio" : "gradio");
+
+	function set_query_param(key: string, value: string) {
+		const url = new URL(window.location.href);
+		url.searchParams.set(key, value);
+		history.replaceState(null, "", url.toString());
+	}
+
+	function get_query_param(key: string): string | null {
+		const url = new URL(window.location.href);
+		return url.searchParams.get(key);
+	}
+
+	function is_valid_language(lang: string | null): boolean {
+		return ["python", "javascript", "bash", "skill", "mcp", "cli"].includes(
+			lang ?? ""
+		);
+	}
+
+	let langs = $derived([
+		["python", "Python", python],
+		["javascript", "JavaScript", javascript],
+		["cli", "CLI", agent],
+		["bash", "cURL", bash],
+		...(space_id ? [["skill", "Skill", skill] as const] : []),
+		["mcp", "MCP", mcp]
+	] as const);
+
+	let is_running = $state(false);
+	let mcp_server_active = $state(false);
+
+	async function get_info(): Promise<{
+		named_endpoints: any;
+		unnamed_endpoints: any;
+	}> {
+		let response = await fetch(
+			root.replace(/\/$/, "") + app.api_prefix + "/info"
+		);
+		let data = await response.json();
+		return data;
+	}
+	async function get_js_info(): Promise<Record<string, any>> {
+		let js_api_info = await app.view_api();
+		return js_api_info;
+	}
+
+	let info: {
+		named_endpoints: any;
+		unnamed_endpoints: any;
+	} = $state()!;
+
+	let js_info: Record<string, any> = $state()!;
+	let analytics: Record<string, any> = $state()!;
+
+	let sorted_dependencies = $derived.by(() => {
+		const valid = dependencies.filter(
+			(dep) =>
+				dep.api_visibility === "public" &&
+				info?.named_endpoints?.["/" + dep.api_name]
+		);
+		if (info && last_api_call) {
+			const mostRecent = valid.find((dep) => dep.id === last_api_call.fn_index);
+			const others = valid.filter((dep) => dep.id !== last_api_call.fn_index);
+			return mostRecent ? [mostRecent, ...others] : valid;
+		}
+		return valid;
+	});
+
+	get_info().then((data) => {
+		info = data;
+	});
+
+	get_js_info().then((js_api_info) => {
+		js_info = js_api_info;
+	});
+
+	async function get_summary(): Promise<{
+		functions: any;
+	}> {
+		try {
+			let response = await fetch(
+				root.replace(/\/$/, "") + "/monitoring/summary"
+			);
+			if (!response.ok) {
+				return { functions: {} };
+			}
+			return await response.json();
+		} catch {
+			return { functions: {} };
+		}
+	}
+
+	get_summary().then((summary) => {
+		analytics = summary.functions;
+	});
+
+	interface ToolParameter {
+		title?: string;
+		type: string;
+		description: string;
+		format?: string;
+		default?: any;
+	}
+
+	interface Tool {
+		name: string;
+		description: string;
+		parameters: Record<string, ToolParameter>;
+		expanded?: boolean;
+		meta: {
+			mcp_type: "tool" | "resource" | "prompt";
+			file_data_present: boolean;
+			endpoint_name: string;
+		};
+	}
+
+	let tools: Tool[] = $state([]);
+	let headers: string[] = $state([]);
+	let mcp_json_stdio: any = $state();
+	let file_data_present = $state(false);
+	let selected_tools: Set<string> = $state(new Set());
+	let tool_prefix = space_id ? space_id.split("/").pop() + "_" : "";
+
+	function remove_tool_prefix(toolName: string): string {
+		if (tool_prefix && toolName.startsWith(tool_prefix)) {
+			return toolName.slice(tool_prefix.length);
+		}
+		return toolName;
+	}
+
+	let selected_tools_array = $derived(Array.from(selected_tools));
+	let selected_tools_without_prefix = $derived(
+		selected_tools_array.map(remove_tool_prefix)
+	);
+	let mcp_server_url_streamable = $derived(
+		selected_tools_array.length > 0 &&
+			selected_tools_array.length < tools.length
+			? `${root}gradio_api/mcp/?tools=${selected_tools_without_prefix.join(",")}`
+			: `${root}gradio_api/mcp/`
+	);
+
+	const upload_file_mcp_server = {
+		command: "uvx",
+		args: [
+			"--from",
+			"gradio[mcp]",
+			"gradio",
+			"upload-mcp",
+			root,
+			"<UPLOAD_DIRECTORY>"
+		]
+	};
+
+	async function fetch_mcp_tools() {
+		try {
+			let schema_url = `${root}gradio_api/mcp/schema`;
+			const response = await fetch(schema_url);
+			const schema = await response.json();
+			file_data_present = schema
+				.map((tool: any) => tool.meta?.file_data_present)
+				.some((present: boolean) => present);
+
+			tools = schema.map((tool: any) => ({
+				name: tool.name,
+				description: tool.description || "",
+				parameters: tool.inputSchema?.properties || {},
+				meta: tool.meta,
+				expanded: false,
+				endpoint_name: tool.endpoint_name
+			}));
+			selected_tools = new Set(tools.map((tool) => tool.name));
+			headers = schema.map((tool: any) => tool.meta?.headers || []).flat();
+			if (headers.length > 0) {
+				mcp_json_stdio = {
+					mcpServers: {
+						gradio: {
+							command: "npx",
+							args: [
+								"mcp-remote",
+								mcp_server_url_streamable,
+								"--transport",
+								"streamable-http",
+								...headers
+									.map((header) => [
+										"--header",
+										`${header}: <YOUR_HEADER_VALUE>`
+									])
+									.flat()
+							]
+						}
+					}
+				};
+			} else {
+				mcp_json_stdio = {
+					mcpServers: {
+						gradio: {
+							command: "npx",
+							args: [
+								"mcp-remote",
+								mcp_server_url_streamable,
+								"--transport",
+								"streamable-http"
+							]
+						}
+					}
+				};
+				if (file_data_present) {
+					mcp_json_stdio.mcpServers.upload_files_to_gradio =
+						upload_file_mcp_server;
+				}
+			}
+		} catch (error) {
+			console.error("Failed to fetch MCP tools:", error);
+			tools = [];
+		}
+	}
+
+	let markdown_code_snippets = $derived.by(() => {
+		const out: Record<string, Record<string, string>> = {};
+		if (!info?.named_endpoints) return out;
+		for (const dep of dependencies) {
+			const api_name = dep.api_name;
+			if (!api_name) continue;
+			const ep = info.named_endpoints["/" + api_name];
+			if (!ep?.code_snippets) continue;
+			const snippets = ep.code_snippets;
+			out[api_name] = {
+				python: snippets.python || "",
+				javascript: snippets.javascript || "",
+				bash: snippets.bash || "",
+				cli: (snippets.cli || "").replace("{command}", cli_command)
+			};
+		}
+		return out;
+	});
+
+	let config_snippets: Record<string, string> = $state({});
+
+	onMount(() => {
+		const controller = new AbortController();
+		const signal = controller.signal;
+
+		document.body.style.overflow = "hidden";
+		if ("parentIFrame" in window) {
+			window.parentIFrame?.scrollTo(0, 0);
+		}
+
+		const lang_param = get_query_param("lang");
+		if (is_valid_language(lang_param)) {
+			current_language = lang_param as
+				| "python"
+				| "javascript"
+				| "bash"
+				| "skill"
+				| "cli"
+				| "mcp";
+		}
+
+		const mcp_schema_url = `${root}gradio_api/mcp/schema`;
+		fetch(mcp_schema_url, { signal: signal })
+			.then((response) => {
+				mcp_server_active = response.ok;
+				if (mcp_server_active) {
+					fetch_mcp_tools();
+					if (!is_valid_language(lang_param)) {
+						current_language = "mcp";
+					}
+				} else {
+					if (!is_valid_language(lang_param)) {
+						current_language = "python";
+					}
+				}
+				controller.abort();
+			})
+			.catch(() => {
+				mcp_server_active = false;
+			});
+
+		return () => {
+			document.body.style.overflow = "auto";
+		};
+	});
+</script>
+
+{#if info && analytics}
+	{#if api_count}
+		<div class="banner-wrap">
+			<ApiBanner
+				{onclose}
+				root={space_id || root}
+				{api_count}
+				{current_language}
+			/>
+		</div>
+
+		<div class="docs-wrap">
+			<div
+				class="client-doc"
+				style="display: flex; align-items: center; justify-content: space-between;"
+			>
+				<p style="font-size: var(--text-lg);">
+					Choose one of the following ways to interact with the API.
+				</p>
+				<CopyMarkdown
+					{current_language}
+					{space_id}
+					{root}
+					{api_count}
+					{tools}
+					{py_docs}
+					{js_docs}
+					{bash_docs}
+					{mcp_docs}
+					{spaces_docs_suffix}
+					{mcp_server_active}
+					{mcp_server_url_streamable}
+					{config_snippets}
+					{markdown_code_snippets}
+					{dependencies}
+					{info}
+					{js_info}
+				/>
+			</div>
+			<div class="endpoint">
+				<div class="snippets">
+					{#each langs as [language, display_name, img]}
+						<li
+							class="snippet
+						{current_language === language ? 'current-lang' : 'inactive-lang'}"
+							onclick={() => {
+								current_language = language;
+								set_query_param("lang", language);
+							}}
+						>
+							<img src={img} alt="" class:agent-icon={language === "cli"} />
+							{display_name}
+						</li>
+					{/each}
+				</div>
+				{#if api_calls.length}
+					<div>
+						<p
+							id="num-recorded-api-calls"
+							style="font-size: var(--text-lg); font-weight:bold; margin: 10px 0px;"
+						>
+							🪄 Recorded API Calls <span class="api-count"
+								>[{api_calls.length}]</span
+							>
+						</p>
+						<p>
+							Here is the code snippet to replay the most recently recorded API
+							calls using the {current_language}
+							client.
+						</p>
+
+						<RecordingSnippet
+							{current_language}
+							{api_calls}
+							{dependencies}
+							{root}
+							api_prefix={app.api_prefix}
+							short_root={space_id || root}
+							{username}
+						/>
+						<p>
+							Note: Some API calls only affect the UI, so when using the
+							clients, the desired result may be achieved with only a subset of
+							the recorded calls.
+						</p>
+					</div>
+					<p
+						style="font-size: var(--text-lg); font-weight:bold; margin: 30px 0px 10px;"
+					>
+						API Documentation
+					</p>
+				{:else}
+					{#if current_language !== "skill"}
+						<p class="padded">
+							{#if current_language == "python" || current_language == "javascript"}
+								1. Install the
+								<span style="text-transform:capitalize">{current_language}</span
+								>
+								client (<a
+									href={current_language == "python" ? py_docs : js_docs}
+									target="_blank">docs</a
+								>) if you don't already have it installed.
+							{:else if current_language == "bash"}
+								1. Confirm that you have cURL installed on your system.
+							{:else if current_language == "cli"}
+								1. Install the CLI if you don't already have it installed.
+							{/if}
+						</p>
+					{/if}
+
+					{#if current_language === "cli"}
+						<div class="cli-flavor-selector">
+							<li
+								class="snippet {cli_flavor === 'gradio'
+									? 'current-lang'
+									: 'inactive-lang'}"
+								onclick={() => {
+									cli_flavor = "gradio";
+								}}
+							>
+								<img src={gradio_logo} alt="Gradio" />
+								Gradio CLI
+							</li>
+							<li
+								class="snippet {cli_flavor === 'hf'
+									? 'current-lang'
+									: 'inactive-lang'}"
+								onclick={() => {
+									cli_flavor = "hf";
+								}}
+							>
+								<img src={hf_logo} alt="HF" />
+								HF CLI
+							</li>
+						</div>
+					{/if}
+
+					<div class:hidden={current_language !== "skill"}>
+						<SkillSnippet {space_id} />
+					</div>
+
+					<div class:hidden={current_language !== "mcp"}>
+						<MCPSnippet
+							{mcp_server_active}
+							{mcp_server_url_streamable}
+							tools={tools.filter((tool) => selected_tools.has(tool.name))}
+							all_tools={tools}
+							bind:selected_tools
+							{mcp_json_stdio}
+							{file_data_present}
+							{mcp_docs}
+							{analytics}
+							{root}
+							bind:config_snippets
+						/>
+					</div>
+
+					{#if current_language !== "mcp" && current_language !== "skill"}
+						<InstallSnippet {current_language} {cli_flavor} />
+
+						<p class="padded">
+							2. Find the API endpoint below corresponding to your desired
+							function in the app. Copy the code snippet, replacing the
+							placeholder values with your own input data.
+							{#if space_id}If this is a private Space, you may need to pass
+								your Hugging Face token as well (<a
+									href={current_language == "python"
+										? py_docs + spaces_docs_suffix
+										: current_language == "javascript"
+											? js_docs + spaces_docs_suffix
+											: bash_docs}
+									class="underline"
+									target="_blank">read more</a
+								>).{/if}
+
+							Or use the
+							<Button
+								size="sm"
+								variant="secondary"
+								onclick={() => onclose?.({ api_recorder_visible: true })}
+							>
+								<div class="loading-dot"></div>
+								<p class="self-baseline">API Recorder</p>
+							</Button>
+							to automatically generate your API requests.
+							{#if current_language == "bash"}<br />&nbsp;<br />Making a
+								prediction and getting a result requires
+								<strong>2 requests</strong>: a
+								<code>POST</code>
+								and a <code>GET</code> request. The <code>POST</code> request
+								returns an <code>EVENT_ID</code>, which is used in the second
+								<code>GET</code> request to fetch the results. In these
+								snippets, we've used <code>awk</code> and <code>read</code> to
+								parse the results, combining these two requests into one command
+								for ease of use.
+								<br />&nbsp;<br />
+								If your endpoint accepts files, you must first upload them via a
+								<code>POST</code> to <code>/upload</code>, then reference the
+								returned path with the <code>meta</code> key:
+								<code
+									>{"{"}"path": "...", "meta": {"{"}"_type": "gradio.FileData"{"}"}{"}"}
+								</code>.
+								{#if username !== null}
+									Note: connecting to an authenticated app requires an
+									additional request.{/if} See
+								<a href={bash_docs} target="_blank">curl docs</a>.
+							{/if}
+
+							<!-- <span
+							id="api-recorder"
+							onclick={() => onclose?.({ api_recorder_visible: true })}
+							>🪄 API Recorder</span
+						> to automatically generate your API requests! -->
+						</p>
+					{/if}
+				{/if}
+
+				<div
+					class:hidden={current_language === "mcp" ||
+						current_language === "skill"}
+				>
+					{#each sorted_dependencies as dependency}
+						{#if info.named_endpoints["/" + dependency.api_name]}
+							<div class="endpoint-container">
+								<CodeSnippet
+									{dependency}
+									{current_language}
+									api_description={info.named_endpoints[
+										"/" + dependency.api_name
+									].description}
+									{analytics}
+									{last_api_call}
+									code_snippets={info.named_endpoints["/" + dependency.api_name]
+										.code_snippets}
+									{cli_command}
+								/>
+
+								{#if info.named_endpoints["/" + dependency.api_name].oauth_token}
+									<OAuthTokenSnippet
+										oauth_token={info.named_endpoints["/" + dependency.api_name]
+											.oauth_token}
+										{current_language}
+									/>
+								{/if}
+
+								<ParametersSnippet
+									endpoint_returns={info.named_endpoints[
+										"/" + dependency.api_name
+									].parameters}
+									js_returns={js_info.named_endpoints["/" + dependency.api_name]
+										.parameters}
+									{is_running}
+									current_language={current_language === "cli"
+										? "python"
+										: current_language}
+								/>
+
+								<ResponseSnippet
+									endpoint_returns={info.named_endpoints[
+										"/" + dependency.api_name
+									].returns}
+									js_returns={js_info.named_endpoints["/" + dependency.api_name]
+										.returns}
+									{is_running}
+									current_language={current_language === "cli"
+										? "python"
+										: current_language}
+								/>
+							</div>
+						{/if}
+					{/each}
+				</div>
+			</div>
+		</div>
+	{:else}
+		<NoApi {root} {onclose} />
+	{/if}
+{/if}
+
+<style>
+	.banner-wrap {
+		position: relative;
+		border-bottom: 1px solid var(--border-color-primary);
+		padding: var(--size-4) var(--size-6);
+		font-size: var(--text-md);
+	}
+
+	@media (--screen-md) {
+		.banner-wrap {
+			font-size: var(--text-xl);
+		}
+	}
+
+	.docs-wrap {
+		display: flex;
+		flex-direction: column;
+		gap: var(--spacing-xxl);
+	}
+
+	.endpoint {
+		border-radius: var(--radius-md);
+		background: var(--background-fill-primary);
+		padding: var(--size-6);
+		padding-top: var(--size-1);
+		font-size: var(--text-md);
+	}
+
+	.client-doc {
+		padding-top: var(--size-6);
+		padding-right: var(--size-6);
+		padding-left: var(--size-6);
+		font-size: var(--text-md);
+	}
+
+	.library {
+		border: 1px solid var(--border-color-accent);
+		border-radius: var(--radius-sm);
+		background: var(--color-accent-soft);
+		padding: 0px var(--size-1);
+		color: var(--color-accent);
+		font-size: var(--text-md);
+		text-decoration: none;
+	}
+
+	.snippets {
+		display: flex;
+		align-items: center;
+		margin-bottom: var(--size-4);
+	}
+
+	.snippets > * + * {
+		margin-left: var(--size-2);
+	}
+
+	.snippet {
+		display: flex;
+		align-items: center;
+		border: 1px solid var(--border-color-primary);
+
+		border-radius: var(--radius-md);
+		padding: var(--size-1) var(--size-1-5);
+		color: var(--body-text-color-subdued);
+		color: var(--body-text-color);
+		line-height: 1;
+		user-select: none;
+		font-size: var(--text-lg);
+	}
+
+	.current-lang {
+		border: 1px solid var(--body-text-color-subdued);
+		color: var(--body-text-color);
+	}
+
+	.inactive-lang {
+		cursor: pointer;
+		color: var(--body-text-color-subdued);
+	}
+
+	.inactive-lang:hover,
+	.inactive-lang:focus {
+		box-shadow: var(--shadow-drop);
+		color: var(--body-text-color);
+	}
+
+	.snippet img {
+		margin-right: var(--size-1-5);
+		width: var(--size-4);
+		height: var(--size-4);
+	}
+
+	.header {
+		margin-top: var(--size-6);
+		font-size: var(--text-xl);
+	}
+
+	.endpoint-container {
+		margin-top: var(--size-3);
+		margin-bottom: var(--size-3);
+		border: 1px solid var(--block-border-color);
+		border-radius: var(--radius-xl);
+		padding: var(--size-3);
+		padding-top: 0;
+	}
+
+	a {
+		text-decoration: underline;
+	}
+
+	p.padded {
+		padding: 15px 0px;
+		font-size: var(--text-lg);
+	}
+
+	#api-recorder {
+		border: 1px solid var(--color-accent);
+		background-color: var(--color-accent-soft);
+		padding: 0px var(--size-2);
+		border-radius: var(--size-1);
+		cursor: pointer;
+	}
+
+	code {
+		font-size: var(--text-md);
+	}
+	.loading-dot {
+		position: relative;
+		left: -9999px;
+		width: 10px;
+		height: 10px;
+		border-radius: 5px;
+		background-color: #fd7b00;
+		color: #fd7b00;
+		box-shadow: 9999px 0 0 -1px;
+		margin-right: 0.25rem;
+	}
+	:global(.docs-wrap .sm.secondary) {
+		padding-top: 1px;
+		padding-bottom: 1px;
+	}
+	.self-baseline {
+		align-self: baseline;
+	}
+	.api-count {
+		font-weight: bold;
+		color: #fd7b00;
+		align-self: baseline;
+		font-family: var(--font-mono);
+		font-size: var(--text-md);
+	}
+
+	code pre {
+		overflow-x: auto;
+		color: var(--body-text-color);
+		font-family: var(--font-mono);
+		tab-size: 2;
+	}
+
+	.token.string {
+		display: contents;
+		color: var(--color-accent-base);
+	}
+
+	.copy {
+		position: absolute;
+		top: 0;
+		right: 0;
+		margin-top: 5px;
+		margin-right: 5px;
+		z-index: 10;
+	}
+
+	.container {
+		display: flex;
+		flex-direction: column;
+		gap: var(--spacing-xxl);
+		margin-top: var(--size-3);
+		margin-bottom: var(--size-3);
+	}
+
+	.desc {
+		color: var(--body-text-color-subdued);
+	}
+
+	.api-name {
+		color: var(--color-accent);
+	}
+
+	.hidden {
+		display: none;
+	}
+
+	.cli-flavor-selector {
+		display: flex;
+		align-items: center;
+		margin-bottom: var(--size-4);
+	}
+
+	.cli-flavor-selector > * + * {
+		margin-left: var(--size-2);
+	}
+
+	@media (prefers-color-scheme: dark) {
+		.agent-icon {
+			filter: invert(1);
+		}
+	}
+</style>

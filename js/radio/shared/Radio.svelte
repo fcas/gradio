@@ -1,34 +1,35 @@
-<script context="module">
+<script module>
 	let id = 0;
 </script>
 
 <script lang="ts">
-	import { createEventDispatcher } from "svelte";
-	export let display_value: string;
-	export let internal_value: string | number;
-	export let disabled = false;
-	export let selected: string | null = null;
-
-	const dispatch = createEventDispatcher<{ input: string | number }>();
-	let is_selected = false;
+	import { tick } from "svelte";
+	let {
+		selected = $bindable(),
+		display_value,
+		internal_value,
+		disabled,
+		rtl,
+		on_input
+	} = $props();
+	let is_selected = $derived(selected === internal_value);
 
 	async function handle_input(
-		selected: string | null,
-		internal_value: string | number
+		e: Event & { currentTarget: EventTarget & HTMLInputElement }
 	): Promise<void> {
-		is_selected = selected === internal_value;
+		is_selected = e.currentTarget.checked;
 		if (is_selected) {
-			dispatch("input", internal_value);
+			await tick();
+			on_input();
 		}
 	}
-
-	$: handle_input(selected, internal_value);
 </script>
 
 <label
 	class:disabled
 	class:selected={is_selected}
 	data-testid="{display_value}-radio-label"
+	class:rtl
 >
 	<input
 		{disabled}
@@ -37,8 +38,9 @@
 		value={internal_value}
 		aria-checked={is_selected}
 		bind:group={selected}
+		oninput={handle_input}
 	/>
-	<span class="ml-2">{display_value}</span>
+	<span>{display_value}</span>
 </label>
 
 <style>
@@ -50,7 +52,7 @@
 		box-shadow: var(--checkbox-label-shadow);
 		border: var(--checkbox-label-border-width) solid
 			var(--checkbox-label-border-color);
-		border-radius: var(--button-small-radius);
+		border-radius: var(--checkbox-border-radius);
 		background: var(--checkbox-label-background-fill);
 		padding: var(--checkbox-label-padding);
 		color: var(--checkbox-label-text-color);
@@ -61,6 +63,18 @@
 
 	label:hover {
 		background: var(--checkbox-label-background-fill-hover);
+		transform: var(--button-transform-hover);
+		box-shadow: var(
+			--checkbox-label-shadow-hover,
+			var(--checkbox-label-shadow)
+		);
+	}
+	label:active {
+		transform: var(--button-transform-active);
+		box-shadow: var(
+			--checkbox-label-shadow-active,
+			var(--checkbox-label-shadow)
+		);
 	}
 	label:focus {
 		background: var(--checkbox-label-background-fill-focus);
@@ -69,10 +83,16 @@
 	label.selected {
 		background: var(--checkbox-label-background-fill-selected);
 		color: var(--checkbox-label-text-color-selected);
+		border-color: var(--checkbox-label-border-color-selected);
 	}
 
 	label > * + * {
 		margin-left: var(--size-2);
+	}
+
+	label.rtl > * + * {
+		margin-left: 0;
+		margin-right: var(--size-2);
 	}
 
 	input {
@@ -92,17 +112,27 @@
 		background-color: var(--checkbox-background-color-selected);
 	}
 
-	input:hover {
+	input:checked::after {
+		content: "";
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		transform: translate(-50%, -50%);
+		border-radius: 50%;
+		background-color: white;
+	}
+
+	input:hover:not([disabled]) {
 		border-color: var(--checkbox-border-color-hover);
 		background-color: var(--checkbox-background-color-hover);
 	}
 
-	input:focus {
+	input:focus:not([disabled]) {
 		border-color: var(--checkbox-border-color-focus);
 		background-color: var(--checkbox-background-color-focus);
 	}
 
-	input:checked:focus {
+	input:checked:focus:not([disabled]) {
 		border-color: var(--checkbox-border-color-focus);
 		background-image: var(--radio-circle);
 		background-color: var(--checkbox-background-color-selected);
@@ -111,5 +141,9 @@
 	input[disabled],
 	.disabled {
 		cursor: not-allowed;
+	}
+
+	input[disabled] {
+		opacity: 0.75;
 	}
 </style>

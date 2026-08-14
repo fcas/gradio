@@ -1,27 +1,38 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import type { I18nFormatter } from "@gradio/utils";
+	import { Spinner } from "@gradio/icons";
 	import WaveSurfer from "wavesurfer.js";
 	import RecordPlugin from "wavesurfer.js/dist/plugins/record.js";
 	import type { WaveformOptions } from "../shared/types";
 	import DeviceSelect from "../shared/DeviceSelect.svelte";
 
-	export let recording = false;
-	export let paused_recording = false;
-	export let stop: () => void;
-	export let record: () => void;
-	export let i18n: I18nFormatter;
-	export let waveform_settings: Record<string, any>;
-	export let waveform_options: WaveformOptions = {
-		show_recording_waveform: true
-	};
+	let {
+		recording = false,
+		paused_recording = false,
+		stop,
+		record,
+		i18n,
+		waveform_settings,
+		waveform_options = { show_recording_waveform: true },
+		waiting = false
+	}: {
+		recording?: boolean;
+		paused_recording?: boolean;
+		stop: () => void;
+		record: () => void;
+		i18n: I18nFormatter;
+		waveform_settings: Record<string, any>;
+		waveform_options?: WaveformOptions;
+		waiting?: boolean;
+	} = $props();
 
 	let micWaveform: WaveSurfer;
 	let waveformRecord: RecordPlugin;
 
 	let microphoneContainer: HTMLDivElement;
 
-	let micDevices: MediaDeviceInfo[] = [];
+	let micDevices: MediaDeviceInfo[] = $state([]);
 
 	onMount(() => {
 		create_mic_waveform();
@@ -32,7 +43,7 @@
 		if (!microphoneContainer) return;
 		micWaveform = WaveSurfer.create({
 			...waveform_settings,
-			height: 100,
+			normalize: false,
 			container: microphoneContainer
 		});
 
@@ -48,10 +59,10 @@
 		/>
 	{/if}
 	<div class="controls">
-		{#if recording}
+		{#if recording && !waiting}
 			<button
 				class={paused_recording ? "stop-button-paused" : "stop-button"}
-				on:click={() => {
+				onclick={() => {
 					waveformRecord?.stopMic();
 					stop();
 				}}
@@ -62,10 +73,22 @@
 				</span>
 				{paused_recording ? i18n("audio.pause") : i18n("audio.stop")}
 			</button>
+		{:else if recording && waiting}
+			<button
+				class="spinner-button"
+				onclick={() => {
+					stop();
+				}}
+			>
+				<div class="icon">
+					<Spinner />
+				</div>
+				{i18n("audio.waiting")}
+			</button>
 		{:else}
 			<button
 				class="record-button"
-				on:click={() => {
+				onclick={() => {
 					waveformRecord?.startMic();
 					record();
 				}}
@@ -95,14 +118,21 @@
 		margin: var(--spacing-xl);
 	}
 
+	.icon {
+		width: var(--size-4);
+		height: var(--size-4);
+		fill: var(--primary-600);
+		stroke: var(--primary-600);
+	}
+
 	.stop-button-paused {
 		display: none;
 		height: var(--size-8);
 		width: var(--size-20);
 		background-color: var(--block-background-fill);
-		border-radius: var(--radius-3xl);
+		border-radius: var(--button-large-radius);
 		align-items: center;
-		border: 1px solid var(--neutral-400);
+		border: 1px solid var(--block-border-color);
 		margin-right: 5px;
 	}
 
@@ -129,11 +159,23 @@
 		height: var(--size-8);
 		width: var(--size-20);
 		background-color: var(--block-background-fill);
-		border-radius: var(--radius-3xl);
+		border-radius: var(--button-large-radius);
 		align-items: center;
 		border: 1px solid var(--primary-600);
 		margin-right: 5px;
 		display: flex;
+	}
+
+	.spinner-button {
+		height: var(--size-8);
+		width: var(--size-24);
+		background-color: var(--block-background-fill);
+		border-radius: var(--radius-3xl);
+		align-items: center;
+		border: 1px solid var(--primary-600);
+		margin: 0 var(--spacing-xl);
+		display: flex;
+		justify-content: space-evenly;
 	}
 
 	.record-button::before {
@@ -149,10 +191,10 @@
 		height: var(--size-8);
 		width: var(--size-24);
 		background-color: var(--block-background-fill);
-		border-radius: var(--radius-3xl);
+		border-radius: var(--button-large-radius);
 		display: flex;
 		align-items: center;
-		border: 1px solid var(--neutral-400);
+		border: 1px solid var(--block-border-color);
 	}
 
 	@keyframes scaling {

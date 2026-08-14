@@ -1,49 +1,87 @@
 <script lang="ts">
-	import { createEventDispatcher, onMount } from "svelte";
+	import { onMount } from "svelte";
 	import {
 		EditorView,
 		ViewUpdate,
 		keymap,
-		placeholder as placeholderExt
+		placeholder as placeholderExt,
+		lineNumbers
 	} from "@codemirror/view";
 	import { StateEffect, EditorState, type Extension } from "@codemirror/state";
 	import { indentWithTab } from "@codemirror/commands";
+	import { autocompletion, acceptCompletion } from "@codemirror/autocomplete";
 
 	import { basicDark } from "cm6-theme-basic-dark";
 	import { basicLight } from "cm6-theme-basic-light";
 	import { basicSetup } from "./extensions";
 	import { getLanguageExtension } from "./language";
 
-	export let class_names = "";
-	export let value = "";
-	export let dark_mode: boolean;
-	export let basic = true;
-	export let language: string;
-	export let lines = 5;
-	export let extensions: Extension[] = [];
-	export let use_tab = true;
-	export let readonly = false;
-	export let placeholder: string | HTMLElement | null | undefined = undefined;
+	interface Props {
+		class_names?: string;
+		value?: string;
+		dark_mode: boolean;
+		basic?: boolean;
+		language: string;
+		lines?: number;
+		max_lines?: number | null;
+		extensions?: Extension[];
+		use_tab?: boolean;
+		readonly?: boolean;
+		placeholder?: string | HTMLElement | null | undefined;
+		wrap_lines?: boolean;
+		show_line_numbers?: boolean;
+		autocomplete?: boolean;
+		onchange?: (value: string) => void;
+		onblur?: () => void;
+		onfocus?: () => void;
+		oninput?: () => void;
+	}
 
-	const dispatch = createEventDispatcher<{
-		change: string;
-		blur: undefined;
-		focus: undefined;
-	}>();
-	let lang_extension: Extension | undefined;
+	let {
+		class_names = "",
+		value = $bindable(),
+		dark_mode,
+		basic = true,
+		language,
+		lines = 5,
+		max_lines = null,
+		extensions = [],
+		use_tab = true,
+		readonly = false,
+		placeholder = undefined,
+		wrap_lines = false,
+		show_line_numbers = true,
+		autocomplete = false,
+		onchange,
+		onblur,
+		onfocus,
+		oninput
+	}: Props = $props();
+
+	let lang_extension: Extension | undefined = $state();
 	let element: HTMLDivElement;
 	let view: EditorView;
-
-	$: get_lang(language);
 
 	async function get_lang(val: string): Promise<void> {
 		const ext = await getLanguageExtension(val);
 		lang_extension = ext;
 	}
 
-	$: reconfigure(), lang_extension;
-	$: set_doc(value);
-	$: update_lines();
+	$effect(() => {
+		get_lang(language);
+	});
+
+	$effect(() => {
+		lang_extension;
+		readonly;
+		reconfigure();
+	});
+
+	$effect(() => {
+		set_doc(value ?? "");
+	});
+
+	update_lines();
 
 	function set_doc(new_doc: string): void {
 		if (view && new_doc !== view.state.doc.toString()) {
@@ -59,7 +97,7 @@
 
 	function update_lines(): void {
 		if (view) {
-			view.requestMeasure({ read: update_gutters });
+			view.requestMeasure({ read: resize });
 		}
 	}
 
@@ -74,11 +112,11 @@
 	}
 
 	function handle_focus(): void {
-		dispatch("focus");
+		onfocus?.();
 	}
 
 	function handle_blur(): void {
-		dispatch("blur");
+		onblur?.();
 	}
 
 	function getGutterLineHeight(_view: EditorView): string | null {
@@ -96,28 +134,46 @@
 		return null;
 	}
 
-	function update_gutters(_view: EditorView): any {
-		let gutters = _view.dom.querySelectorAll<HTMLElement>(".cm-gutter");
-		let _lines = lines + 1;
-		let lineHeight = getGutterLineHeight(_view);
+	function resize(_view: EditorView): any {
+		let scroller = _view.dom.querySelector<HTMLElement>(".cm-scroller");
+		if (!scroller) {
+			return null;
+		}
+		const lineHeight = getGutterLineHeight(_view);
 		if (!lineHeight) {
 			return null;
 		}
-		for (var i = 0; i < gutters.length; i++) {
-			let node = gutters[i];
-			node.style.minHeight = `calc(${lineHeight} * ${_lines})`;
-		}
-		return null;
+
+		const minLines = lines == 1 ? 1 : lines + 1;
+		scroller.style.minHeight = `calc(${lineHeight} * ${minLines})`;
+		if (max_lines)
+			scroller.style.maxHeight = `calc(${lineHeight} * ${max_lines + 1})`;
+	}
+
+	import { Transaction } from "@codemirror/state";
+
+	function is_user_input(update: ViewUpdate): boolean {
+		return update.transactions.some(
+			(tr) => tr.annotation(Transaction.userEvent) != null
+		);
 	}
 
 	function handle_change(vu: ViewUpdate): void {
-		if (vu.docChanged) {
-			const doc = vu.state.doc;
-			const text = doc.toString();
-			value = text;
-			dispatch("change", text);
+		if (!vu.docChanged) return;
+
+		const doc = vu.state.doc;
+		const text = doc.toString();
+		value = text;
+
+		const user_change = is_user_input(vu);
+		if (user_change) {
+			onchange?.(text);
+			oninput?.();
+		} else {
+			onchange?.(text);
 		}
-		view.requestMeasure({ read: update_gutters });
+
+		view.requestMeasure({ read: resize });
 	}
 
 	function get_extensions(): Extension[] {
@@ -127,7 +183,8 @@
 				use_tab,
 				placeholder,
 				readonly,
-				lang_extension
+				lang_extension,
+				show_line_numbers
 			),
 			FontTheme,
 			...get_theme(),
@@ -148,10 +205,13 @@
 			fontFamily: "var(--font-mono)",
 			minHeight: "100%"
 		},
+		".cm-gutterElement": {
+			marginRight: "var(--spacing-xs)"
+		},
 		".cm-gutters": {
 			marginRight: "1px",
 			borderRight: "1px solid var(--border-color-primary)",
-			backgroundColor: "transparent",
+			backgroundColor: "var(--block-background-fill);",
 			color: "var(--body-text-color-subdued)"
 		},
 		".cm-focused": {
@@ -162,6 +222,19 @@
 		},
 		".cm-cursor": {
 			borderLeftColor: "var(--body-text-color)"
+		}
+	});
+
+	const AutocompleteTheme = EditorView.theme({
+		".cm-tooltip-autocomplete": {
+			"& > ul": {
+				backgroundColor: "var(--background-fill-primary)",
+				color: "var(--body-text-color)"
+			},
+			"& > ul > li[aria-selected]": {
+				backgroundColor: "var(--color-accent-soft)",
+				color: "var(--body-text-color)"
+			}
 		}
 	});
 
@@ -177,7 +250,8 @@
 		use_tab: boolean,
 		placeholder: string | HTMLElement | null | undefined,
 		readonly: boolean,
-		lang: Extension | null | undefined
+		lang: Extension | null | undefined,
+		show_line_numbers: boolean
 	): Extension[] {
 		const extensions: Extension[] = [
 			EditorView.editable.of(!readonly),
@@ -189,7 +263,9 @@
 			extensions.push(basicSetup);
 		}
 		if (use_tab) {
-			extensions.push(keymap.of([indentWithTab]));
+			extensions.push(
+				keymap.of([{ key: "Tab", run: acceptCompletion }, indentWithTab])
+			);
 		}
 		if (placeholder) {
 			extensions.push(placeholderExt(placeholder));
@@ -197,8 +273,19 @@
 		if (lang) {
 			extensions.push(lang);
 		}
+		if (show_line_numbers) {
+			extensions.push(lineNumbers());
+		}
+		if (autocomplete) {
+			extensions.push(autocompletion());
+			extensions.push(AutocompleteTheme);
+		}
 
 		extensions.push(EditorView.updateListener.of(handle_change));
+		if (wrap_lines) {
+			extensions.push(EditorView.lineWrapping);
+		}
+
 		return extensions;
 	}
 
@@ -233,13 +320,13 @@
 	.wrap {
 		display: flex;
 		flex-direction: column;
-		flex-flow: column;
+		flex-grow: 1;
 		margin: 0;
 		padding: 0;
 		height: 100%;
 	}
 	.codemirror-wrapper {
-		height: 100%;
+		flex-grow: 1;
 		overflow: auto;
 	}
 

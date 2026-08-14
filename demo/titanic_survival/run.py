@@ -1,14 +1,12 @@
-import os
-
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier  # type: ignore
+from sklearn.model_selection import train_test_split  # type: ignore
 
 import gradio as gr
+# get_file() returns the file path to sample data files included with Gradio
+from gradio.media import get_file
 
-current_dir = os.path.dirname(os.path.realpath(__file__))
-data = pd.read_csv(os.path.join(current_dir, "files/titanic.csv"))
-
+data = pd.read_csv(get_file("titanic.csv"))
 
 def encode_age(df):
     df.Age = df.Age.fillna(-0.5)
@@ -17,14 +15,12 @@ def encode_age(df):
     df.Age = categories
     return df
 
-
 def encode_fare(df):
     df.Fare = df.Fare.fillna(-0.5)
     bins = (-1, 0, 8, 15, 31, 1000)
     categories = pd.cut(df.Fare, bins, labels=False)
     df.Fare = categories
     return df
-
 
 def encode_df(df):
     df = encode_age(df)
@@ -52,7 +48,6 @@ def encode_df(df):
     ]
     return df
 
-
 train = encode_df(data)
 
 X_all = train.drop(["Survived", "PassengerId"], axis=1)
@@ -66,7 +61,6 @@ X_train, X_test, y_train, y_test = train_test_split(
 clf = RandomForestClassifier()
 clf.fit(X_train, y_train)
 predictions = clf.predict(X_test)
-
 
 def predict_survival(passenger_class, is_male, age, company, fare, embark_point):
     if passenger_class is None or embark_point is None:
@@ -88,7 +82,6 @@ def predict_survival(passenger_class, is_male, age, company, fare, embark_point)
     pred = clf.predict_proba(df)[0]
     return {"Perishes": float(pred[0]), "Survives": float(pred[1])}
 
-
 demo = gr.Interface(
     predict_survival,
     [
@@ -106,6 +99,7 @@ demo = gr.Interface(
         ["third", True, 30, ["Child"], 20, "S"],
     ],
     live=True,
+    api_name="predict",
 )
 
 if __name__ == "__main__":

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import inspect
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Annotated
 
 import typer
 from rich import print
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 from tomlkit import dump, parse
-from typing_extensions import Annotated
 
+import gradio
 from gradio.analytics import custom_component_analytics
 
 from ..display import LivePanelDisplay
@@ -26,13 +27,13 @@ def _create(
         ),
     ],
     directory: Annotated[
-        Optional[Path],
+        Path | None,
         typer.Option(
             help="Directory to create the component in. Default is None. If None, will be created in <component-name> directory in the current directory."
         ),
     ] = None,
     package_name: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(help="Name of the package. Default is gradio_{name.lower()}"),
     ] = None,
     template: Annotated[
@@ -52,7 +53,7 @@ def _create(
         typer.Option(help="NPM install command to use. Default is 'npm install'."),
     ] = "npm install",
     pip_path: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             help="Path to pip executable. If None, will use the default path found by `which pip3`. If pip3 is not found, `which pip` will be tried. If both fail an error will be raised."
         ),
@@ -111,7 +112,13 @@ def _create(
 
         _create_utils._create_backend(name, component, directory, package_name)
         live.update(":snake: Created backend code", add_sleep=0.2)
-
+        p = Path(inspect.getfile(gradio)).parent
+        component_source = p / "_frontend_code" / gradio.__version__ / component.js_dir
+        if not component_source.exists():
+            live.update(
+                ":fast_down_button: Downloading frontend code from Hugging Face Hub. Set HF_HUB_DISABLE_PROGRESS_BARS to disable progress bars.",
+                add_sleep=0.2,
+            )
         _create_utils._create_frontend(
             name.lower(), component, directory=directory, package_name=package_name
         )
@@ -156,14 +163,14 @@ def _create(
                 pyproject_toml["project"]["license"] = license_  # type: ignore
 
                 requires_python = Prompt.ask(
-                    "\n:snake: Please enter the [bold][magenta]allowed python[/][/] versions for your component. Leave blank for '>=3.8'"
+                    "\n:snake: Please enter the [bold][magenta]allowed python[/][/] versions for your component. Leave blank for '>=3.10'"
                 )
-                requires_python = requires_python or ">=3.8"
+                requires_python = requires_python or ">=3.10"
                 print(
                     f":snake: Using requires-python of [bold][magenta]{requires_python}[/][/]"
                 )
                 pyproject_toml["project"]["requires-python"] = (  # type: ignore
-                    requires_python or ">=3.8"
+                    requires_python or ">=3.10"
                 )
 
                 print(
@@ -177,7 +184,7 @@ def _create(
                         break
                 current_keywords = pyproject_toml["project"].get("keywords", [])  # type: ignore
                 pyproject_toml["project"]["keywords"] = current_keywords + keywords  # type: ignore
-                with open(directory / "pyproject.toml", "w") as f:
+                with open(directory / "pyproject.toml", "w", encoding="utf-8") as f:
                     dump(pyproject_toml, f)
 
         (directory / "demo" / "requirements.txt").write_text(package_name)

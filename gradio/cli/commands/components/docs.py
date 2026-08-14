@@ -3,33 +3,36 @@ from __future__ import annotations
 import importlib
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Annotated, Any
 
-import requests
+import httpx
 import tomlkit as toml
 from typer import Argument, Option
-from typing_extensions import Annotated
 
 from gradio.analytics import custom_component_analytics
 from gradio.cli.commands.display import LivePanelDisplay
 
 from ._docs_assets import css
-from ._docs_utils import extract_docstrings, get_deep, make_markdown, make_space
+from ._docs_utils import (
+    RUFF_INSTALLED,
+    extract_docstrings,
+    get_deep,
+    make_markdown,
+    make_space,
+)
 
 
 def _docs(
     path: Annotated[
         Path, Argument(help="The directory of the custom component.")
     ] = Path("."),
-    demo_dir: Annotated[
-        Optional[Path], Option(help="Path to the demo directory.")
-    ] = None,
-    demo_name: Annotated[Optional[str], Option(help="Name of the demo file.")] = None,
+    demo_dir: Annotated[Path | None, Option(help="Path to the demo directory.")] = None,
+    demo_name: Annotated[str | None, Option(help="Name of the demo file.")] = None,
     readme_path: Annotated[
-        Optional[Path], Option(help="Path to the README.md file.")
+        Path | None, Option(help="Path to the README.md file.")
     ] = None,
     space_url: Annotated[
-        Optional[str], Option(help="URL of the Space to use for the demo.")
+        str | None, Option(help="URL of the Space to use for the demo.")
     ] = None,
     generate_space: Annotated[
         bool,
@@ -83,13 +86,18 @@ def _docs(
                 f"Cannot find pyproject.toml file in [orange3]{_component_dir}[/]"
             )
 
-        with open(_component_dir / "pyproject.toml") as f:
+        with open(_component_dir / "pyproject.toml", encoding="utf-8") as f:
             data = toml.loads(f.read())
 
         name = get_deep(data, ["project", "name"])
 
         if not isinstance(name, str):
             raise ValueError("Name not found in pyproject.toml")
+
+        if not RUFF_INSTALLED:
+            live.update(
+                "\n:warning: [yellow]Ruff is not installed. Code snippets will not be formatted. To install, run `pip install ruff`.[/]"
+            )
 
         run_command(
             live=live,
@@ -122,10 +130,10 @@ def run_command(
     _component_dir: Path,
     simple: bool = False,
 ):
-    with open(_demo_path) as f:
+    with open(_demo_path, encoding="utf-8") as f:
         demo = f.read()
 
-    pypi_exists = requests.get(f"https://pypi.org/pypi/{name}/json").status_code
+    pypi_exists = httpx.get(f"https://pypi.org/pypi/{name}/json").status_code
 
     pypi_exists = pypi_exists == 200 or False
 
@@ -163,13 +171,13 @@ def run_command(
             suppress_demo_check=suppress_demo_check,
         )
 
-        with open(_demo_dir / "space.py", "w") as f:
+        with open(_demo_dir / "space.py", "w", encoding="utf-8") as f:
             f.write(source)
             if not simple:
                 live.update(
                     f":white_check_mark: Space created in [orange3]{_demo_dir}/space.py[/]\n"
                 )
-        with open(_demo_dir / "css.css", "w") as f:
+        with open(_demo_dir / "css.css", "w", encoding="utf-8") as f:
             f.write(css)
 
     if generate_readme:
@@ -181,7 +189,7 @@ def run_command(
 
         readme_content = Path(_readme_path).read_text()
 
-        with open(_readme_path, "w") as f:
+        with open(_readme_path, "w", encoding="utf-8") as f:
             yaml_regex = re.search(
                 "(?:^|[\r\n])---[\n\r]+([\\S\\s]*?)[\n\r]+---([\n\r]|$)", readme_content
             )
@@ -196,10 +204,10 @@ def run_command(
         short_readme_path = Path(_readme_path).relative_to(_component_dir)
         short_demo_path = Path(_demo_dir / "space.py").relative_to(_component_dir)
         live.update(
-            f":white_check_mark: Documention generated in [orange3]{short_demo_path}[/] and [orange3]{short_readme_path}[/]. Pass --no-generate-docs to disable auto documentation."
+            f":white_check_mark: Documentation generated in [orange3]{short_demo_path}[/] and [orange3]{short_readme_path}[/]. Pass --no-generate-docs to disable auto documentation."
         )
 
     if type_mode == "simple":
         live.update(
-            "\n:orange_circle: [red]The docs were generated in simple mode. Updating python to a version greater than 3.9 will result in richer documentation.[/]"
+            "\n:orange_circle: [red]The docs were generated in simple mode. Updating python to a more recent version will result in richer documentation.[/]"
         )

@@ -2,7 +2,6 @@ import time
 
 import gradio as gr
 
-
 def fake_gan():
     time.sleep(1)
     images = [
@@ -12,13 +11,13 @@ def fake_gan():
     ]
     return images
 
-
 demo = gr.Interface(
     fn=fake_gan,
     inputs=None,
-    outputs=gr.Gallery(label="Generated Images", columns=[2]),
+    outputs=gr.Gallery(label="Generated Images", columns=2),
     title="FD-GAN",
     description="This is a fake demo of a GAN. In reality, the images are randomly chosen from Unsplash.",
+    api_name="predict",
 )
 
 if __name__ == "__main__":

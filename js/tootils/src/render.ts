@@ -3,27 +3,31 @@ import {
 	prettyDOM,
 	fireEvent as dtlFireEvent
 } from "@testing-library/dom";
-import { tick } from "svelte";
-import type { SvelteComponent } from "svelte";
+import { tick, mount, unmount } from "svelte";
+import type { SvelteComponent, Component } from "svelte";
+// @ts-ignore — `proxy` is the runtime implementation behind `$state(...)`.
+// Using it directly keeps this file as plain `.ts` instead of `.svelte.ts`,
+// which intermittently fails to load in CI under concurrent test-file imports.
+import { proxy } from "svelte/internal/client";
 
 import type {
 	queries,
 	Queries,
 	BoundFunction,
-	EventType,
-	FireObject
+	EventType
 } from "@testing-library/dom";
-import { spy, type Spy } from "tinyspy";
-import { Gradio } from "@gradio/utils";
-import type { LoadingStatus } from "@gradio/statustracker";
+import { vi, type Mock } from "vitest";
+import { GRADIO_ROOT, allowed_shared_props } from "@gradio/utils";
+import type { ILoadingStatus as LoadingStatus } from "@gradio/statustracker";
+import { _ } from "svelte-i18n";
 
 const containerCache = new Map();
 const componentCache = new Set();
 
-type ComponentType<T extends SvelteComponent, Props> = new (args: {
-	target: any;
-	props?: Props;
-}) => T;
+type ComponentType<
+	T extends SvelteComponent,
+	Props extends Record<string, any>
+> = Component<Props>;
 
 export type RenderResult<
 	C extends SvelteComponent,
@@ -34,16 +38,21 @@ export type RenderResult<
 	debug: (el?: HTMLElement | DocumentFragment) => void;
 	unmount: () => void;
 } & { [P in keyof Q]: BoundFunction<Q[P]> };
-
 const loading_status: LoadingStatus = {
 	eta: 0,
 	queue_position: 1,
 	queue_size: 1,
+	queue: true,
+	message: null,
+	time_limit: null,
+	progress: [],
+	validation_error: null,
+	type: "output",
+	stream_state: null,
 	status: "complete" as LoadingStatus["status"],
 	scroll_to_output: false,
-	visible: true,
 	fn_index: 0,
-	show_progress: "full"
+	show_progress: "full" as LoadingStatus["show_progress"]
 };
 
 export interface RenderOptions<Q extends Queries = typeof queries> {
@@ -61,111 +70,173 @@ export async function render<
 	props?: Omit<Props, "gradio" | "loading_status"> & {
 		loading_status?: LoadingStatus;
 	},
-	_container?: HTMLElement
+	options?: {
+		container?: HTMLElement;
+	}
 ): Promise<
 	RenderResult<T> & {
-		listen: typeof listen;
-		wait_for_event: typeof wait_for_event;
+		listen: (event_name: string, opts?: { retrospective?: boolean }) => Mock;
+		set_data: (data: Record<string, any>) => Promise<void>;
+		get_data: () => Promise<Record<string, any>>;
 	}
 > {
 	let container: HTMLElement;
-	if (!_container) {
+	if (!options?.container) {
 		container = document.body;
 	} else {
-		container = _container;
+		container = options.container;
 	}
 
 	const target = container.appendChild(document.createElement("div"));
 
-	const ComponentConstructor: ComponentType<
-		T,
-		Props & { gradio: typeof Gradio<X> }
-	> =
+	const ComponentConstructor: ComponentType<T, Props> =
 		//@ts-ignore
 		Component.default || Component;
 
 	const id = Math.floor(Math.random() * 1000000);
 
-	const component = new ComponentConstructor({
-		target,
-		//@ts-ignore
-		props: {
-			loading_status,
-			...(props || {}),
-			//@ts-ignore
-			gradio: new Gradio(
-				id,
-				target,
-				"light",
-				"2.0.0",
-				"http://localhost:8000",
-				false,
-				null,
-				//@ts-ignore
-				(s) => s,
-				// @ts-ignore
-				{ client: {} }
-			)
+	let component_set_data: (data: Record<string, any>) => void;
+	let component_get_data: () => Promise<Record<string, any>>;
+
+	const mock_register = (
+		_id: number,
+		set_data: (data: Record<string, any>) => void,
+		get_data: () => Promise<Record<string, any>>
+	): void => {
+		component_set_data = set_data;
+		component_get_data = get_data;
+	};
+
+	const event_listeners = new Map<string, Set<(data: any) => void>>();
+	const event_buffer: { event: string; data: any }[] = [];
+
+	function notify_listeners(event: string, data: any): void {
+		const listeners = event_listeners.get(event);
+		if (listeners) {
+			for (const listener of listeners) {
+				listener(data);
+			}
 		}
+	}
+
+	const dispatcher = (_id: number, event: string, data: any): void => {
+		event_buffer.push({ event, data });
+		notify_listeners(event, data);
+	};
+
+	function listen(
+		event_name: string,
+		opts?: { retrospective?: boolean }
+	): Mock {
+		const fn = vi.fn();
+		if (!event_listeners.has(event_name)) {
+			event_listeners.set(event_name, new Set());
+		}
+		event_listeners.get(event_name)!.add(fn);
+
+		if (opts?.retrospective) {
+			for (const entry of event_buffer) {
+				if (entry.event === event_name) {
+					fn(entry.data);
+				}
+			}
+		}
+
+		return fn;
+	}
+
+	const i18nFormatter = (s: string | null | undefined): string => s ?? "";
+
+	const shared_props_obj: Record<string, any> = {
+		id,
+		target,
+		theme_mode: "light" as const,
+		version: "2.0.0",
+		formatter: i18nFormatter,
+		client: {} as any,
+		load_component: () => Promise.resolve({ default: {} as any }),
+		show_progress: true,
+		api_prefix: "",
+		server: {} as any,
+		show_label: true,
+		register_component: mock_register,
+		dispatcher
+	};
+
+	const component_props_obj: Record<string, any> = {
+		i18n: i18nFormatter
+	};
+
+	if (props) {
+		for (const key in props) {
+			const value = (props as any)[key];
+			if (allowed_shared_props.includes(key as any)) {
+				shared_props_obj[key] = value;
+			} else {
+				component_props_obj[key] = value;
+			}
+		}
+	}
+
+	shared_props_obj.loading_status = props?.loading_status
+		? props.loading_status
+		: loading_status;
+
+	// Wrap in a reactive proxy — the real app delivers `shared_props` /
+	// `props` from AppTree's `$state` tree (a deep proxy), and the Gradio
+	// class aliases those proxies directly. If we passed plain objects
+	// here, reactive reads of `gradio.shared.X` and `gradio.props.X` inside
+	// component templates wouldn't track, breaking effects that drive
+	// change/input dispatch. `proxy(...)` is the runtime form of `$state(...)`.
+	const componentProps = proxy({
+		shared_props: shared_props_obj,
+		props: {
+			...component_props_obj
+		},
+		...shared_props_obj
 	});
+
+	const component = mount(ComponentConstructor, {
+		target,
+		props: componentProps
+	} as any) as T;
 
 	containerCache.set(container, { target, component });
 	componentCache.add(component);
 
-	component.$$.on_destroy.push(() => {
-		componentCache.delete(component);
-	});
-
 	await tick();
-
-	type extractGeneric<Type> = Type extends Gradio<infer X> ? X : null;
-	type event_name = keyof extractGeneric<Props["gradio"]>;
-
-	function listen(event: event_name): Spy {
-		const mock = spy();
-		target.addEventListener("gradio", (e: Event) => {
-			if (isCustomEvent(e)) {
-				if (e.detail.event === event && e.detail.id === id) {
-					mock(e);
-				}
-			}
-		});
-
-		return mock;
-	}
-
-	async function wait_for_event(event: event_name): Promise<Spy> {
-		return new Promise((res) => {
-			const mock = spy();
-			target.addEventListener("gradio", (e: Event) => {
-				if (isCustomEvent(e)) {
-					if (e.detail.event === event && e.detail.id === id) {
-						mock(e);
-						res(mock);
-					}
-				}
-			});
-		});
-	}
 
 	return {
 		container,
 		component,
+		listen,
+		set_data: async (data: Record<string, any>) => {
+			const r = component_set_data(data);
+			// we double tick here because the event may trigger state update inside  the component
+			// the event may _only_ be fired in response to these state updates.
+			// so we want everything to settle before returning and continuing with the test.
+			await tick();
+			await tick();
+			return r;
+		},
+		get_data: () => component_get_data(),
 		//@ts-ignore
 		debug: (el = container): void => console.warn(prettyDOM(el)),
 		unmount: (): void => {
-			if (componentCache.has(component)) component.$destroy();
+			if (componentCache.has(component)) {
+				unmount(component);
+			}
 		},
-		...getQueriesForElement(container),
-		listen,
-		wait_for_event
+		...getQueriesForElement(container)
 	};
 }
 
 const cleanupAtContainer = (container: HTMLElement): void => {
 	const { target, component } = containerCache.get(container);
 
-	if (componentCache.has(component)) component.$destroy();
+	if (componentCache.has(component)) {
+		unmount(component);
+	}
 
 	if (target.parentNode === document.body) {
 		document.body.removeChild(target);
@@ -176,7 +247,15 @@ const cleanupAtContainer = (container: HTMLElement): void => {
 
 export function cleanup(): void {
 	Array.from(containerCache.keys()).forEach(cleanupAtContainer);
+	document.body.innerHTML = "";
 }
+
+type AsyncFireObject = {
+	[K in EventType]: (
+		element: Document | Element | Window | Node,
+		options?: object
+	) => Promise<boolean>;
+};
 
 export const fireEvent = Object.keys(dtlFireEvent).reduce((acc, key) => {
 	const _key = key as EventType;
@@ -187,19 +266,43 @@ export const fireEvent = Object.keys(dtlFireEvent).reduce((acc, key) => {
 			options: object = {}
 		): Promise<boolean> => {
 			const event = dtlFireEvent[_key](element, options);
+			// we double tick here because the event may trigger state update inside  the component
+			// the event may _only_ be fired in response to these state updates.
+			// so we want everything to settle before returning and continuing with the test.
+			await tick();
 			await tick();
 			return event;
 		}
 	};
-}, {} as FireObject);
+}, {} as AsyncFireObject);
 
 export type FireFunction = (
 	element: Document | Element | Window,
 	event: Event
 ) => Promise<boolean>;
 
-export * from "@testing-library/dom";
+export { download_file, upload_file, drop_file } from "./download.js";
 
-function isCustomEvent(event: Event): event is CustomEvent {
-	return "detail" in event;
+/**
+ * Creates a mock client suitable for components that use file uploads.
+ * The upload mock echoes back the input FileData unchanged.
+ */
+export function mock_client(): Record<string, any> {
+	return {
+		upload: async (file_data: any[]) => file_data,
+		stream: async () => ({ onmessage: null, close: () => {} })
+	};
 }
+export {
+	TEST_TXT,
+	TEST_JPG,
+	TEST_PNG,
+	TEST_MP4,
+	TEST_WAV,
+	TEST_PDF,
+	TEST_GLTF,
+	TEST_PLY,
+	TEST_PLY_MESH,
+	TEST_SPLAT
+} from "./fixtures.js";
+export * from "@testing-library/dom";

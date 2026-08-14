@@ -11,6 +11,7 @@ class TestModel3D:
         model_component = gr.components.Model3D(None, label="Model")
         assert model_component.get_config() == {
             "value": None,
+            "display_mode": None,
             "clear_color": [0, 0, 0, 0],
             "label": "Model",
             "show_label": True,
@@ -23,12 +24,14 @@ class TestModel3D:
             "proxy_url": None,
             "interactive": None,
             "name": "model3d",
-            "camera_position": (None, None, None),
+            "camera_position": [None, None, None],
             "height": None,
             "zoom_speed": 1,
             "pan_speed": 1,
             "_selectable": False,
             "key": None,
+            "preserved_by_key": ["value"],
+            "buttons": [],
         }
 
         file = "test/test_files/Box.gltf"

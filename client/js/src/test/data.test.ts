@@ -3,19 +3,76 @@ import {
 	update_object,
 	walk_and_store_blobs,
 	skip_queue,
-	post_message
+	post_message,
+	handle_file,
+	handle_payload
 } from "../helpers/data";
-import { NodeBlob } from "../client";
 import { config_response, endpoint_info } from "./test_data";
-import { BlobRef } from "../types";
+import { BlobRef, Command } from "../types";
+import { FileData } from "../upload";
+
+const IS_NODE =
+	typeof process !== "undefined" && process.env.TEST_MODE === "node";
+
+class FakeBuffer {
+	static from(data: string) {
+		return new Blob([data]);
+	}
+
+	static isBuffer() {
+		return false;
+	}
+
+	static isEncoding() {
+		return false;
+	}
+
+	static byteLength() {
+		return 0;
+	}
+
+	static concat() {
+		return new Blob([]);
+	}
+
+	static compare() {
+		return 0;
+	}
+
+	static alloc() {
+		return new Blob([]);
+	}
+
+	static allocUnsafe() {
+		return new Blob([]);
+	}
+
+	static allocUnsafeSlow() {
+		return new Blob([]);
+	}
+
+	static poolSize = 0;
+
+	static of() {
+		return new Blob([]);
+	}
+
+	equals(other: Blob) {
+		return this.toString() === other.toString();
+	}
+}
+
+if (!IS_NODE) {
+	globalThis.Buffer = FakeBuffer as unknown as BufferConstructor;
+}
 
 describe("walk_and_store_blobs", () => {
-	it("should convert a Buffer to a Blob", async () => {
-		const buffer = Buffer.from("test data");
+	it.skipIf(!IS_NODE)("should convert a Buffer to a Blob", async () => {
+		const buffer = globalThis.Buffer.from("test data");
 		const parts = await walk_and_store_blobs(buffer, "text");
 
 		expect(parts).toHaveLength(1);
-		expect(parts[0].blob).toBeInstanceOf(NodeBlob);
+		expect(parts[0].blob).toBeInstanceOf(Blob);
 	});
 
 	it("should return a Blob when passed a Blob", async () => {
@@ -28,19 +85,37 @@ describe("walk_and_store_blobs", () => {
 			endpoint_info
 		);
 
-		expect(parts[0].blob).toBeInstanceOf(NodeBlob);
+		expect(parts[0].blob).toBeInstanceOf(Blob);
 	});
 
-	it("should return blob: false when passed an image", async () => {
-		const blob = new Blob([]);
-		const parts = await walk_and_store_blobs(
-			blob,
-			"Image",
-			[],
-			true,
-			endpoint_info
-		);
-		expect(parts[0].blob).toBe(false);
+	it("should handle arrays", async () => {
+		const image = new Blob([]);
+		const parts = await walk_and_store_blobs([image]);
+
+		expect(parts).toHaveLength(1);
+		expect(parts[0].blob).toBeInstanceOf(Blob);
+		expect(parts[0].path).toEqual(["0"]);
+	});
+
+	it("should preserve File instances (and their filenames)", async () => {
+		const file = new File(["test data"], "report.txt", {
+			type: "text/plain"
+		});
+		const parts = await walk_and_store_blobs([file]);
+
+		expect(parts).toHaveLength(1);
+		expect(parts[0].blob).toBe(file);
+		expect((parts[0].blob as File).name).toBe("report.txt");
+		expect((parts[0].blob as File).type).toBe("text/plain");
+	});
+
+	it("should preserve the MIME type of Blob instances", async () => {
+		const blob = new Blob(["test data"], { type: "image/png" });
+		const parts = await walk_and_store_blobs([blob]);
+
+		expect(parts).toHaveLength(1);
+		expect(parts[0].blob).toBe(blob);
+		expect(parts[0].blob && parts[0].blob.type).toBe("image/png");
 	});
 
 	it("should handle deep structures", async () => {
@@ -48,7 +123,7 @@ describe("walk_and_store_blobs", () => {
 		const parts = await walk_and_store_blobs({ a: { b: { data: { image } } } });
 
 		expect(parts).toHaveLength(1);
-		expect(parts[0].blob).toBeInstanceOf(NodeBlob);
+		expect(parts[0].blob).toBeInstanceOf(Blob);
 		expect(parts[0].path).toEqual(["a", "b", "data", "image"]);
 	});
 
@@ -70,90 +145,90 @@ describe("walk_and_store_blobs", () => {
 			]
 		});
 
-		expect(parts[0].blob).toBeInstanceOf(NodeBlob);
+		expect(parts[0].blob).toBeInstanceOf(Blob);
 	});
 
-	it("should handle deep structures with arrays (with equality check)", async () => {
-		const image = new Blob([]);
+	it.skipIf(!IS_NODE)(
+		"should handle deep structures with arrays (with equality check)",
+		async () => {
+			const image = new Blob([]);
 
-		const obj = {
-			a: [
-				{
-					b: [
-						{
-							data: [[image], image, [image, [image]]]
-						}
-					]
+			const obj = {
+				a: [
+					{
+						b: [
+							{
+								data: [[image], image, [image, [image]]]
+							}
+						]
+					}
+				]
+			};
+			const parts = await walk_and_store_blobs(obj);
+
+			async function map_path(obj: Record<string, any>, parts: BlobRef[]) {
+				const { path, blob } = parts[parts.length - 1];
+				let ref = obj;
+				path.forEach((p) => (ref = ref[p]));
+
+				// since ref is a Blob and blob is a Blob, we deep equal check the two buffers instead
+				if (ref instanceof Blob && blob instanceof Blob) {
+					const refBuffer = Buffer.from(await ref.arrayBuffer());
+					const blobBuffer = Buffer.from(await blob.arrayBuffer());
+					return refBuffer.equals(blobBuffer);
 				}
-			]
-		};
-		const parts = await walk_and_store_blobs(obj);
 
-		async function map_path(obj: Record<string, any>, parts: BlobRef[]) {
-			const { path, blob } = parts[parts.length - 1];
-			let ref = obj;
-			path.forEach((p) => (ref = ref[p]));
-
-			// since ref is a Blob and blob is a NodeBlob, we deep equal check the two buffers instead
-			if (ref instanceof Blob && blob instanceof NodeBlob) {
-				const refBuffer = Buffer.from(await ref.arrayBuffer());
-				const blobBuffer = Buffer.from(await blob.arrayBuffer());
-				return refBuffer.equals(blobBuffer);
+				return ref === blob;
 			}
 
-			return ref === blob;
+			expect(parts[0].blob).toBeInstanceOf(Blob);
+			expect(map_path(obj, parts)).toBeTruthy();
 		}
+	);
 
-		expect(parts[0].blob).toBeInstanceOf(NodeBlob);
-		expect(map_path(obj, parts)).toBeTruthy();
-	});
+	it.skipIf(!IS_NODE)(
+		"should handle buffer instances and return a BlobRef",
+		async () => {
+			const buffer = Buffer.from("test");
+			const parts = await walk_and_store_blobs(buffer, undefined, ["blob"]);
 
-	it("should handle buffer instances and return a BlobRef", async () => {
-		const buffer = Buffer.from("test");
-		const parts = await walk_and_store_blobs(buffer, undefined, ["blob"]);
+			expect(parts).toHaveLength(1);
+			expect(parts[0].blob).toBeInstanceOf(Blob);
+			expect(parts[0].path).toEqual(["blob"]);
+		}
+	);
 
-		expect(parts).toHaveLength(1);
-		expect(parts[0].blob).toBeInstanceOf(NodeBlob);
-		expect(parts[0].path).toEqual(["blob"]);
-	});
+	it.skipIf(!IS_NODE)(
+		"should handle buffer instances with a path and return a BlobRef with the path",
+		async () => {
+			const buffer = Buffer.from("test data");
+			const parts = await walk_and_store_blobs(buffer);
 
-	it("should handle buffer instances with a path and return a BlobRef with the path", async () => {
-		const buffer = Buffer.from("test data");
-		const parts = await walk_and_store_blobs(buffer);
+			expect(parts).toHaveLength(1);
+			expect(parts[0].path).toEqual([]);
+			expect(parts[0].blob).toBeInstanceOf(Blob);
+		}
+	);
 
-		expect(parts).toHaveLength(1);
-		expect(parts[0].path).toEqual([]);
-		expect(parts[0].blob).toBeInstanceOf(NodeBlob);
-	});
-
-	it("should convert an object with deep structures to BlobRefs", async () => {
-		const param = {
-			a: {
-				b: {
-					data: {
-						image: Buffer.from("test image")
+	it.skipIf(!IS_NODE)(
+		"should convert an object with deep structures to BlobRefs",
+		async () => {
+			const param = {
+				a: {
+					b: {
+						data: {
+							image: Buffer.from("test image")
+						}
 					}
 				}
-			}
-		};
-		const parts = await walk_and_store_blobs(param);
+			};
+			const parts = await walk_and_store_blobs(param);
 
-		expect(parts).toHaveLength(1);
-		expect(parts[0].path).toEqual(["a", "b", "data", "image"]);
-		expect(parts[0].blob).toBeInstanceOf(NodeBlob);
-	});
-
-	it("should convert an object with primitive values to BlobRefs", async () => {
-		const param = {
-			test: "test"
-		};
-		const parts = await walk_and_store_blobs(param);
-
-		expect(parts).toHaveLength(1);
-		expect(parts[0].path).toEqual([]);
-		expect(parts[0].blob).toBeInstanceOf(NodeBlob);
-		expect(parts[0].type).toEqual("object");
-	});
+			expect(parts).toHaveLength(1);
+			expect(parts[0].path).toEqual(["a", "b", "data", "image"]);
+			expect(parts[0].blob).toBeInstanceOf(Blob);
+		}
+	);
 });
 describe("update_object", () => {
 	it("should update the value of a nested property", () => {
@@ -198,7 +273,7 @@ describe("skip_queue", () => {
 
 	it("should not skip queue when global and dependency queue is enabled", () => {
 		config.enable_queue = true;
-		config.dependencies[id].queue = true;
+		config.dependencies.find((dep) => dep.id === id)!.queue = true;
 
 		const result = skip_queue(id, config_response);
 
@@ -207,7 +282,7 @@ describe("skip_queue", () => {
 
 	it("should not skip queue when global queue is disabled and dependency queue is enabled", () => {
 		config.enable_queue = false;
-		config.dependencies[id].queue = true;
+		config.dependencies.find((dep) => dep.id === id)!.queue = true;
 
 		const result = skip_queue(id, config_response);
 
@@ -216,7 +291,7 @@ describe("skip_queue", () => {
 
 	it("should should skip queue when global queue and dependency queue is disabled", () => {
 		config.enable_queue = false;
-		config.dependencies[id].queue = false;
+		config.dependencies.find((dep) => dep.id === id)!.queue = false;
 
 		const result = skip_queue(id, config_response);
 
@@ -225,7 +300,7 @@ describe("skip_queue", () => {
 
 	it("should should skip queue when global queue is enabled and dependency queue is disabled", () => {
 		config.enable_queue = true;
-		config.dependencies[id].queue = false;
+		config.dependencies.find((dep) => dep.id === id)!.queue = false;
 
 		const result = skip_queue(id, config_response);
 
@@ -238,44 +313,236 @@ describe("post_message", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("should send a message to the parent window and resolve with received data", async () => {
-		const test_data = { key: "value" };
-		const test_origin = "https://huggingface.co";
+	it.skipIf(IS_NODE)(
+		"should send a message to the parent window and resolve with received data",
+		async () => {
+			const test_data = { key: "value" };
+			const test_origin = "https://huggingface.co";
 
-		const post_message_mock = vi.fn();
+			// Create a mock for window.parent.postMessage that we'll spy on
+			const post_message_spy = vi
+				.spyOn(window.parent, "postMessage")
+				.mockImplementation(() => {});
 
-		global.window = {
-			// @ts-ignore
-			parent: {
-				postMessage: post_message_mock
-			}
-		};
-
-		const message_channel_mock = {
-			port1: {
-				onmessage: (handler) => {
-					onmessage = handler;
-				},
+			// Mock MessageChannel
+			const original_message_channel = globalThis.MessageChannel;
+			const mock_port1 = {
+				onmessage: null as unknown as (event: { data: any }) => void,
 				close: vi.fn()
-			},
-			port2: {}
-		};
+			};
+			const mock_port2 = {};
 
-		vi.stubGlobal("MessageChannel", function () {
-			this.port1 = message_channel_mock.port1;
-			this.port2 = message_channel_mock.port2;
-			return this;
-		});
+			class MockMessageChannel {
+				port1 = mock_port1;
+				port2 = mock_port2;
+			}
 
-		const promise = post_message(test_data, test_origin);
+			// Replace MessageChannel with our mock version
+			globalThis.MessageChannel = MockMessageChannel as any;
 
-		if (message_channel_mock.port1.onmessage) {
-			message_channel_mock.port1.onmessage({ data: test_data });
+			const promise = post_message(test_data, test_origin);
+
+			// Simulate receiving a message back
+			if (mock_port1.onmessage) {
+				mock_port1.onmessage({ data: test_data } as any);
+			}
+
+			await expect(promise).resolves.toEqual(test_data);
+			expect(post_message_spy).toHaveBeenCalledWith(test_data, test_origin, [
+				mock_port2
+			]);
+
+			// Restore original MessageChannel
+			globalThis.MessageChannel = original_message_channel;
+			post_message_spy.mockRestore();
 		}
+	);
+});
 
-		await expect(promise).resolves.toEqual(test_data);
-		expect(post_message_mock).toHaveBeenCalledWith(test_data, test_origin, [
-			message_channel_mock.port2
-		]);
+describe("handle_file", () => {
+	it("should handle a Blob object and return the blob", () => {
+		const blob = new Blob(["test data"], { type: "image/png" });
+		const result = handle_file(blob) as FileData;
+
+		expect(result).toBe(blob);
+	});
+
+	it.skipIf(!IS_NODE)(
+		"should handle a Buffer object and return it as a blob",
+		() => {
+			const buffer = Buffer.from("test data");
+			const result = handle_file(buffer) as FileData;
+			expect(result).toBeInstanceOf(Blob);
+		}
+	);
+
+	it.skipIf(!IS_NODE)(
+		"should handle a local file path and return a Command object",
+		() => {
+			const file_path = "./owl.png";
+			const result = handle_file(file_path) as Command;
+			expect(result).toBeInstanceOf(Command);
+			expect(result).toEqual({
+				type: "command",
+				command: "upload_file",
+				meta: { path: "./owl.png", name: "./owl.png", orig_path: "./owl.png" },
+				fileData: undefined
+			});
+		}
+	);
+
+	it.skipIf(IS_NODE)(
+		"should handle a File object and return it unchanged, preserving its name and type",
+		() => {
+			const file = new File(["test image"], "test.png", { type: "image/png" });
+			const result = handle_file(file) as File;
+			expect(result).toBe(file);
+			expect(result.name).toBe("test.png");
+			expect(result.type).toBe("image/png");
+		}
+	);
+
+	it("should throw an error for invalid input", () => {
+		const invalid_input = 123;
+
+		expect(() => {
+			// @ts-ignore
+			handle_file(invalid_input);
+		}).toThrowError(
+			"Invalid input: must be a URL, File, Blob, or Buffer object."
+		);
+	});
+});
+
+describe("handle_payload", () => {
+	it("should return an input payload with null in place of `state` when with_null_state is true", () => {
+		const resolved_payload = [2];
+		const dependency = {
+			inputs: [1, 2]
+		};
+		const components = [
+			{ id: 1, type: "number" },
+			{ id: 2, type: "state" }
+		];
+		const with_null_state = true;
+		const result = handle_payload(
+			resolved_payload,
+			// @ts-ignore
+			dependency,
+			components,
+			"input",
+			with_null_state
+		);
+		expect(result).toEqual([2, null]);
+	});
+	it("should return an input payload with null in place of two `state` components when with_null_state is true", () => {
+		const resolved_payload = ["hello", "goodbye"];
+		const dependency = {
+			inputs: [1, 2, 3, 4]
+		};
+		const components = [
+			{ id: 1, type: "textbox" },
+			{ id: 2, type: "state" },
+			{ id: 3, type: "textbox" },
+			{ id: 4, type: "state" }
+		];
+		const with_null_state = true;
+		const result = handle_payload(
+			resolved_payload,
+			// @ts-ignore
+			dependency,
+			components,
+			"input",
+			with_null_state
+		);
+		expect(result).toEqual(["hello", null, "goodbye", null]);
+	});
+
+	it("should return an output payload without the state component value when with_null_state is false", () => {
+		const resolved_payload = ["hello", null];
+		const dependency = {
+			outputs: [2, 3]
+		};
+		const components = [
+			{ id: 2, type: "textbox" },
+			{ id: 3, type: "state" }
+		];
+		const with_null_state = false;
+		const result = handle_payload(
+			resolved_payload,
+			// @ts-ignore
+			dependency,
+			components,
+			"output",
+			with_null_state
+		);
+		expect(result).toEqual(["hello"]);
+	});
+
+	it("should return an ouput payload without the two state component values when with_null_state is false", () => {
+		const resolved_payload = ["hello", null, "world", null];
+		const dependency = {
+			outputs: [2, 3, 4, 5]
+		};
+		const components = [
+			{ id: 2, type: "textbox" },
+			{ id: 3, type: "state" },
+			{ id: 4, type: "textbox" },
+			{ id: 5, type: "state" }
+		];
+		const with_null_state = false;
+		const result = handle_payload(
+			resolved_payload,
+			// @ts-ignore
+			dependency,
+			components,
+			"output",
+			with_null_state
+		);
+		expect(result).toEqual(["hello", "world"]);
+	});
+
+	it("should return an ouput payload with the two state component values when with_null_state is true", () => {
+		const resolved_payload = ["hello", null, "world", null];
+		const dependency = {
+			outputs: [2, 3, 4, 5]
+		};
+		const components = [
+			{ id: 2, type: "textbox" },
+			{ id: 3, type: "state" },
+			{ id: 4, type: "textbox" },
+			{ id: 5, type: "state" }
+		];
+		const with_null_state = true;
+		const result = handle_payload(
+			resolved_payload,
+			// @ts-ignore
+			dependency,
+			components,
+			"output",
+			with_null_state
+		);
+		expect(result).toEqual(["hello", null, "world", null]);
+	});
+
+	it("should return the same payload where no state components are defined", () => {
+		const resolved_payload = ["hello", "world"];
+		const dependency = {
+			inputs: [2, 3]
+		};
+		const components = [
+			{ id: 2, type: "textbox" },
+			{ id: 3, type: "textbox" }
+		];
+		const with_null_state = true;
+		const result = handle_payload(
+			resolved_payload,
+			// @ts-ignore
+			dependency,
+			components,
+			"input",
+			with_null_state
+		);
+		expect(result).toEqual(["hello", "world"]);
 	});
 });

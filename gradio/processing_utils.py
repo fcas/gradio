@@ -1,108 +1,54 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
+import ipaddress
 import json
 import logging
+import mimetypes
 import os
 import shutil
 import subprocess
 import tempfile
 import warnings
+from collections.abc import Awaitable, Callable, Coroutine
+from functools import lru_cache, wraps
 from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
+from urllib.parse import urljoin, urlparse
 
-import aiofiles
 import httpx
 import numpy as np
+import safehttpx as sh
 from gradio_client import utils as client_utils
-from PIL import Image, ImageOps, PngImagePlugin
+from PIL import Image, ImageOps, ImageSequence, PngImagePlugin
 
-from gradio import utils, wasm_utils
+from gradio import utils
+from gradio._vendor import aiofiles
+from gradio._vendor.ffmpy import FFmpeg, FFprobe, FFRuntimeError
+from gradio.context import LocalContext
 from gradio.data_classes import FileData, GradioModel, GradioRootModel, JsonData
-from gradio.exceptions import Error
-from gradio.utils import abspath, get_upload_folder, is_in_or_equal
+from gradio.exceptions import Error, InvalidPathError
+from gradio.profiling import traced_sync
+from gradio.route_utils import API_PREFIX
+from gradio.utils import abspath, get_hash_seed, get_upload_folder, is_in_or_equal
 
 with warnings.catch_warnings():
     warnings.simplefilter("ignore")  # Ignore pydub warning if ffmpeg is not installed
     from pydub import AudioSegment
 
-if wasm_utils.IS_WASM:
-    import pyodide.http  # type: ignore
-    import urllib3
-
-    # NOTE: In the Wasm env, we use urllib3 to make HTTP requests. See https://github.com/gradio-app/gradio/issues/6837.
-    class Urllib3ResponseSyncByteStream(httpx.SyncByteStream):
-        def __init__(self, response) -> None:
-            self.response = response
-
-        def __iter__(self):
-            yield from self.response.stream()
-
-    class Urllib3Transport(httpx.BaseTransport):
-        def __init__(self):
-            self.pool = urllib3.PoolManager()
-
-        def handle_request(self, request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            method = request.method
-            headers = dict(request.headers)
-            body = None if method in ["GET", "HEAD"] else request.read()
-
-            response = self.pool.request(
-                headers=headers,
-                method=method,
-                url=url,
-                body=body,
-                preload_content=False,  # Stream the content
-            )
-
-            return httpx.Response(
-                status_code=response.status,
-                headers=response.headers,
-                stream=Urllib3ResponseSyncByteStream(response),
-            )
-
-    sync_transport = Urllib3Transport()
-
-    class PyodideHttpResponseAsyncByteStream(httpx.AsyncByteStream):
-        def __init__(self, response) -> None:
-            self.response = response
-
-        async def __aiter__(self):
-            yield await self.response.bytes()
-
-    class PyodideHttpTransport(httpx.AsyncBaseTransport):
-        async def handle_async_request(
-            self,
-            request: httpx.Request,
-        ) -> httpx.Response:
-            url = str(request.url)
-            method = request.method
-            headers = dict(request.headers)
-            body = None if method in ["GET", "HEAD"] else await request.aread()
-            response = await pyodide.http.pyfetch(
-                url, method=method, headers=headers, body=body
-            )
-            return httpx.Response(
-                status_code=response.status,
-                headers=response.headers,
-                stream=PyodideHttpResponseAsyncByteStream(response),
-            )
-
-    async_transport = PyodideHttpTransport()
-else:
-    sync_transport = None
-    async_transport = None
+sync_transport = None
+async_transport = None
 
 sync_client = httpx.Client(transport=sync_transport)
-async_client = httpx.AsyncClient(transport=async_transport)
 
 log = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from gradio.blocks import Block
+
 
 #########################
 # GENERAL
@@ -118,7 +64,7 @@ def to_binary(x: str | dict) -> bytes:
             base64str = client_utils.encode_url_or_file_to_base64(x["path"])
     else:
         base64str = x
-    return base64.b64decode(extract_base64_data(base64str))
+    return base64.b64decode(extract_base64_data(base64str))  # type: ignore
 
 
 def extract_base64_data(x: str) -> str:
@@ -137,7 +83,7 @@ def encode_plot_to_base64(plt, format: str = "png"):
         plt.savefig(output_bytes, format=fmt)
         bytes_data = output_bytes.getvalue()
     base64_str = str(base64.b64encode(bytes_data), "utf-8")
-    return output_base64(base64_str, fmt)
+    return f"data:image/{format or 'png'};base64,{base64_str}"
 
 
 def get_pil_exif_bytes(pil_image):
@@ -157,62 +103,61 @@ def get_pil_metadata(pil_image):
 
 def encode_pil_to_bytes(pil_image, format="png"):
     with BytesIO() as output_bytes:
-        if format == "png":
-            params = {"pnginfo": get_pil_metadata(pil_image)}
+        if format.lower() == "gif":
+            frames = [frame.copy() for frame in ImageSequence.Iterator(pil_image)]
+            frames[0].save(
+                output_bytes,
+                format=format,
+                save_all=True,
+                append_images=frames[1:],
+                loop=0,
+            )
         else:
-            exif = get_pil_exif_bytes(pil_image)
-            params = {"exif": exif} if exif else {}
-        pil_image.save(output_bytes, format, **params)
+            if format.lower() == "png":
+                params = {"pnginfo": get_pil_metadata(pil_image)}
+            else:
+                exif = get_pil_exif_bytes(pil_image)
+                params = {"exif": exif} if exif else {}
+            pil_image.save(output_bytes, format, **params)
         return output_bytes.getvalue()
 
 
-def encode_pil_to_base64(pil_image, format="png"):
-    bytes_data = encode_pil_to_bytes(pil_image, format)
-    base64_str = str(base64.b64encode(bytes_data), "utf-8")
-    return output_base64(base64_str, format)
-
-
-def encode_array_to_base64(image_array, format="png"):
-    with BytesIO() as output_bytes:
-        pil_image = Image.fromarray(_convert(image_array, np.uint8, force_copy=False))
-        pil_image.save(output_bytes, format)
-        bytes_data = output_bytes.getvalue()
-    base64_str = str(base64.b64encode(bytes_data), "utf-8")
-    return output_base64(base64_str, format)
-
-
-def output_base64(data, format=None) -> str:
-    return f"data:image/{format or 'png'};base64,{data}"
+hash_seed = get_hash_seed().encode("utf-8")
 
 
 def hash_file(file_path: str | Path, chunk_num_blocks: int = 128) -> str:
-    sha1 = hashlib.sha1()
+    sha = hashlib.sha256()
+    sha.update(hash_seed)
     with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(chunk_num_blocks * sha1.block_size), b""):
-            sha1.update(chunk)
-    return sha1.hexdigest()
+        for chunk in iter(lambda: f.read(chunk_num_blocks * sha.block_size), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
 
 
 def hash_url(url: str) -> str:
-    sha1 = hashlib.sha1()
-    sha1.update(url.encode("utf-8"))
-    return sha1.hexdigest()
+    sha = hashlib.sha256()
+    sha.update(hash_seed)
+    sha.update(url.encode("utf-8"))
+    return sha.hexdigest()
 
 
 def hash_bytes(bytes: bytes):
-    sha1 = hashlib.sha1()
-    sha1.update(bytes)
-    return sha1.hexdigest()
+    sha = hashlib.sha256()
+    sha.update(hash_seed)
+    sha.update(bytes)
+    return sha.hexdigest()
 
 
 def hash_base64(base64_encoding: str, chunk_num_blocks: int = 128) -> str:
-    sha1 = hashlib.sha1()
-    for i in range(0, len(base64_encoding), chunk_num_blocks * sha1.block_size):
-        data = base64_encoding[i : i + chunk_num_blocks * sha1.block_size]
-        sha1.update(data.encode("utf-8"))
-    return sha1.hexdigest()
+    sha = hashlib.sha256()
+    sha.update(hash_seed)
+    for i in range(0, len(base64_encoding), chunk_num_blocks * sha.block_size):
+        data = base64_encoding[i : i + chunk_num_blocks * sha.block_size]
+        sha.update(data.encode("utf-8"))
+    return sha.hexdigest()
 
 
+@traced_sync("postprocess_save_pil_to_cache")
 def save_pil_to_cache(
     img: Image.Image,
     cache_dir: str,
@@ -227,6 +172,7 @@ def save_pil_to_cache(
     return filename
 
 
+@traced_sync("postprocess_save_img_array_to_cache")
 def save_img_array_to_cache(
     arr: np.ndarray, cache_dir: str, format: str = "webp"
 ) -> str:
@@ -234,24 +180,62 @@ def save_img_array_to_cache(
     return save_pil_to_cache(pil_image, cache_dir, format=format)
 
 
+@traced_sync("postprocess_save_audio_to_cache")
 def save_audio_to_cache(
     data: np.ndarray, sample_rate: int, format: str, cache_dir: str
 ) -> str:
-    temp_dir = Path(cache_dir) / hash_bytes(data.tobytes())
+    audio_metadata = {
+        "cache_schema": "audio-cache-v1",
+        "dtype": str(data.dtype),
+        "format": format,
+        "sample_rate": int(sample_rate),
+        "shape": data.shape,
+    }
+    audio_hash = hashlib.sha256()
+    audio_hash.update(hash_seed)
+    audio_hash.update(json.dumps(audio_metadata, sort_keys=True).encode("utf-8"))
+    audio_hash.update(data.tobytes())
+    temp_dir = Path(cache_dir) / audio_hash.hexdigest()
     temp_dir.mkdir(exist_ok=True, parents=True)
     filename = str((temp_dir / f"audio.{format}").resolve())
     audio_to_file(sample_rate, data, filename, format=format)
     return filename
 
 
+def detect_audio_format(data: bytes) -> str:
+    """Detect audio format from file header bytes.
+
+    Args:
+        data: File content as bytes
+
+    Returns:
+        Detected file extension with dot (e.g., ".wav", ".mp3") or empty string if not detected
+    """
+    # Check WAV format (RIFF header)
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WAVE":
+        return ".wav"
+    # Check MP3 format (ID3 tag)
+    elif len(data) >= 3 and data[:3] == b"ID3":  # noqa: SIM114
+        return ".mp3"
+    # Check MP3 format (sync frame)
+    elif len(data) >= 2 and data[:2] == b"\xff\xfb":
+        return ".mp3"
+    return ""
+
+
+@traced_sync("postprocess_save_bytes_to_cache")
 def save_bytes_to_cache(data: bytes, file_name: str, cache_dir: str) -> str:
     path = Path(cache_dir) / hash_bytes(data)
     path.mkdir(exist_ok=True, parents=True)
+    if not Path(file_name).suffix:
+        detected_extension = detect_audio_format(data)
+        file_name = file_name + detected_extension
     path = path / Path(file_name).name
     path.write_bytes(data)
     return str(path.resolve())
 
 
+@traced_sync("save_file_to_cache")
 def save_file_to_cache(file_path: str | Path, cache_dir: str) -> str:
     """Returns a temporary file path for a copy of the given file path if it does
     not already exist. Otherwise returns the path to the existing temp file."""
@@ -268,41 +252,129 @@ def save_file_to_cache(file_path: str | Path, cache_dir: str) -> str:
     return full_temp_file_path
 
 
-def save_url_to_cache(url: str, cache_dir: str) -> str:
-    """Downloads a file and makes a temporary file path for a copy if does not already
-    exist. Otherwise returns the path to the existing temp file."""
-    temp_dir = hash_url(url)
-    temp_dir = Path(cache_dir) / temp_dir
-    temp_dir.mkdir(exist_ok=True, parents=True)
-    name = client_utils.strip_invalid_filename_characters(Path(url).name)
-    full_temp_file_path = str(abspath(temp_dir / name))
+# Always return these URLs as is, without checking to see if they resolve
+# to an internal IP address. This is because Hugging Face uses DNS splitting,
+# which means that requests from HF Spaces to HF Datasets or HF Models
+# may resolve to internal IP addresses even if they are publicly accessible.
+PUBLIC_HOSTNAME_WHITELIST = [
+    "hf.co",
+    "huggingface.co",
+    "*.hf.co",
+    "*.huggingface.co",
+]
 
-    if not Path(full_temp_file_path).exists():
-        with sync_client.stream("GET", url, follow_redirects=True) as r, open(
-            full_temp_file_path, "wb"
-        ) as f:
-            for chunk in r.iter_raw():
-                f.write(chunk)
+
+def is_public_ip(ip: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip)
+        return not (
+            ip_obj.is_private
+            or ip_obj.is_loopback
+            or ip_obj.is_link_local
+            or ip_obj.is_multicast
+            or ip_obj.is_reserved
+        )
+    except ValueError:
+        return False
+
+
+T = TypeVar("T")
+
+
+def lru_cache_async(maxsize: int = 128):
+    def decorator(
+        async_func: Callable[..., Coroutine[Any, Any, T]],
+    ) -> Callable[..., Awaitable[T]]:
+        @lru_cache(maxsize=maxsize)
+        @wraps(async_func)
+        def wrapper(*args: Any, **kwargs: Any) -> Awaitable[T]:
+            return asyncio.create_task(async_func(*args, **kwargs))
+
+        return wrapper
+
+    return decorator
+
+
+MAX_REDIRECTS = 20
+
+
+async def async_ssrf_protected_get(url: str) -> httpx.Response:
+    """SSRF-protected GET: routes through `safehttpx` with the public hostname
+    allow-list and re-validates each redirect. Returns the `httpx.Response`
+    without raising on non-2xx status (callers decide how to handle that)."""
+    response = await sh.get(
+        url, domain_whitelist=PUBLIC_HOSTNAME_WHITELIST, _transport=async_transport
+    )
+    redirects = 0
+    while response.has_redirect_location:
+        if redirects >= MAX_REDIRECTS:
+            raise Exception(f"Exceeded maximum of {MAX_REDIRECTS} redirects.")
+        redirects += 1
+        # Resolve the Location against the URL that produced this redirect, so
+        # relative/scheme-relative redirects and host changes across hops are
+        # handled per RFC 3986. safehttpx re-validates the resolved host.
+        url = urljoin(str(response.url), response.headers["Location"])
+        response = await sh.get(
+            url, domain_whitelist=PUBLIC_HOSTNAME_WHITELIST, _transport=async_transport
+        )
+    return response
+
+
+async def async_ssrf_protected_download(url: str, cache_dir: str) -> str:
+    temp_dir = Path(cache_dir) / hash_url(url)
+    temp_dir.mkdir(exist_ok=True, parents=True)
+
+    parsed_url = urlparse(url)
+    base_path = parsed_url.path.rstrip("/")
+    filename = (
+        client_utils.strip_invalid_filename_characters(Path(base_path).name) or "file"
+    )
+
+    full_temp_file_path = str(abspath(temp_dir / filename))
+    if Path(full_temp_file_path).exists():
+        return full_temp_file_path
+
+    response = await async_ssrf_protected_get(url)
+    if response.status_code != 200:
+        raise Exception(f"Failed to download file. Status code: {response.status_code}")
+
+    async with aiofiles.open(full_temp_file_path, "wb") as f:
+        async for chunk in response.aiter_bytes():
+            await f.write(chunk)
 
     return full_temp_file_path
 
 
-async def async_save_url_to_cache(url: str, cache_dir: str) -> str:
-    """Downloads a file and makes a temporary file path for a copy if does not already
-    exist. Otherwise returns the path to the existing temp file. Uses async httpx."""
-    temp_dir = hash_url(url)
-    temp_dir = Path(cache_dir) / temp_dir
+def unsafe_download(url: str, cache_dir: str) -> str:
+    temp_dir = Path(cache_dir) / hash_url(url)
     temp_dir.mkdir(exist_ok=True, parents=True)
-    name = client_utils.strip_invalid_filename_characters(Path(url).name)
-    full_temp_file_path = str(abspath(temp_dir / name))
+    filename = client_utils.strip_invalid_filename_characters(Path(url).name)
+    full_temp_file_path = str(abspath(temp_dir / filename))
 
-    if not Path(full_temp_file_path).exists():
-        async with async_client.stream("GET", url, follow_redirects=True) as response:
-            async with aiofiles.open(full_temp_file_path, "wb") as f:
-                async for chunk in response.aiter_raw():
-                    await f.write(chunk)
+    with (
+        sync_client.stream("GET", url, follow_redirects=True) as r,
+        open(full_temp_file_path, "wb") as f,
+    ):
+        for chunk in r.iter_raw():
+            f.write(chunk)
+
+    # print path and file size
+    print(
+        f"Downloaded {full_temp_file_path} ({os.path.getsize(full_temp_file_path)} bytes)"
+    )
+    log.info(
+        f"Downloaded {full_temp_file_path} ({os.path.getsize(full_temp_file_path)} bytes)"
+    )
 
     return full_temp_file_path
+
+
+def ssrf_protected_download(url: str, cache_dir: str) -> str:
+    return client_utils.synchronize_async(async_ssrf_protected_download, url, cache_dir)
+
+
+# Custom components created with versions of gradio < 5.0 may be using the processing_utils.save_url_to_cache method, so we alias to ssrf_protected_download to preserve backwards-compatibility
+save_url_to_cache = ssrf_protected_download
 
 
 def save_base64_to_cache(
@@ -348,6 +420,7 @@ def check_all_files_in_cache(data: JsonData):
             (path := d.get("path", ""))
             and not client_utils.is_http_url_like(path)
             and not is_in_or_equal(path, get_upload_folder())
+            and not utils.is_static_file(path)
         ):
             raise Error(
                 f"File {path} is not in the cache folder and cannot be accessed."
@@ -376,8 +449,16 @@ def move_files_to_cache(
         keep_in_cache: If True, the file will not be deleted from cache when the server is shut down.
     """
 
+    def _mark_svg_as_safe(payload: FileData):
+        # If the app has not launched, this path can be considered an "allowed path"
+        # This is mainly so that svg files can be displayed inline for button/chatbot icons
+        if (
+            (blocks := LocalContext.blocks.get(None)) is None or not blocks.is_running
+        ) and (mimetypes.guess_type(payload.path)[0] == "image/svg+xml"):
+            utils.set_static_paths([payload.path])
+
     def _move_to_cache(d: dict):
-        payload = FileData(**d)
+        payload = FileData(**d)  # type: ignore
         # If the gradio app developer is returning a URL from
         # postprocess, it means the component can display a URL
         # without it being served from the gradio server
@@ -388,14 +469,8 @@ def move_files_to_cache(
             pass
         elif not block.proxy_url:
             # If the file is on a remote server, do not move it to cache.
-            if check_in_upload_folder and not client_utils.is_http_url_like(
-                payload.path
-            ):
-                path = os.path.abspath(payload.path)
-                if not is_in_or_equal(path, get_upload_folder()):
-                    raise ValueError(
-                        f"File {path} is not in the upload folder and cannot be accessed."
-                    )
+            if not client_utils.is_http_url_like(payload.path):
+                _check_allowed(payload.path, check_in_upload_folder)
             if not payload.is_stream:
                 temp_file_path = block.move_resource_to_block_cache(payload.path)
                 if temp_file_path is None:
@@ -404,24 +479,74 @@ def move_files_to_cache(
                 if keep_in_cache:
                     block.keep_in_cache.add(payload.path)
 
-        url_prefix = "/stream/" if payload.is_stream else "/file="
+        url_prefix = (
+            f"{API_PREFIX}/stream/" if payload.is_stream else f"{API_PREFIX}/file="
+        )
         if block.proxy_url:
             proxy_url = block.proxy_url.rstrip("/")
-            url = f"/proxy={proxy_url}{url_prefix}{payload.path}"
+            url = f"{API_PREFIX}/proxy={proxy_url}{url_prefix}{payload.path}"
         elif client_utils.is_http_url_like(payload.path) or payload.path.startswith(
             f"{url_prefix}"
         ):
-            url = payload.path
+            url = f"{payload.path}"
         else:
             url = f"{url_prefix}{payload.path}"
         payload.url = url
-
+        _mark_svg_as_safe(payload)
         return payload.model_dump()
 
     if isinstance(data, (GradioRootModel, GradioModel)):
         data = data.model_dump()
 
-    return client_utils.traverse(data, _move_to_cache, client_utils.is_file_obj)
+    return client_utils.traverse(
+        data, _move_to_cache, client_utils.is_file_obj_with_meta
+    )
+
+
+def _check_allowed(path: str | Path, check_in_upload_folder: bool):
+    blocks = LocalContext.blocks.get(None)
+    if blocks is None or not blocks.has_launched:
+        return
+
+    abs_path = utils.abspath(path)
+
+    created_paths = [utils.get_upload_folder()]
+    # if check_in_upload_folder=True, we are running this during pre-process
+    # in which case only files in the upload_folder (cache_dir) are accepted
+    if check_in_upload_folder:
+        allowed_paths = []
+    else:
+        allowed_paths = blocks.allowed_paths + [os.getcwd(), tempfile.gettempdir()]
+    allowed, reason = utils.is_allowed_file(
+        abs_path,
+        blocked_paths=blocks.blocked_paths,
+        allowed_paths=allowed_paths,
+        created_paths=created_paths,
+    )
+    if not allowed:
+        msg = f"Cannot move {abs_path} to the gradio cache dir because "
+        if reason == "in_blocklist":
+            msg += f"it is located in one of the blocked_paths ({', '.join(blocks.blocked_paths)})."
+        elif check_in_upload_folder:
+            msg += "it was not uploaded by a user."
+        else:
+            msg += "it was not created by the application or it is not "
+            msg += "located in either the current working directory or your system's temp directory. "
+            msg += "To fix this error, please ensure your function returns files located in either "
+            msg += f"the current working directory ({os.getcwd()}), your system's temp directory ({tempfile.gettempdir()}) "
+            msg += f"or add {str(abs_path.parent)} to the allowed_paths parameter of launch()."
+        raise InvalidPathError(msg)
+    if (
+        utils.is_in_or_equal(abs_path, os.getcwd())
+        and abs_path.name.startswith(".")
+        and not any(
+            is_in_or_equal(path, allowed_path) for allowed_path in blocks.allowed_paths
+        )
+    ):
+        raise InvalidPathError(
+            "Dotfiles located in the temporary directory cannot be moved to the cache for security reasons. "
+            "If you'd like to specifically allow this file to be served, you can add it to the allowed_paths parameter of launch()."
+        )
 
 
 async def async_move_files_to_cache(
@@ -444,8 +569,16 @@ async def async_move_files_to_cache(
         keep_in_cache: If True, the file will not be deleted from cache when the server is shut down.
     """
 
+    def _mark_svg_as_safe(payload: FileData):
+        # If the app has not launched, this path can be considered an "allowed path"
+        # This is mainly so that svg files can be displayed inline for button/chatbot icons
+        if (
+            (blocks := LocalContext.blocks.get(None)) is None or not blocks.is_running
+        ) and (mimetypes.guess_type(payload.path)[0] == "image/svg+xml"):
+            utils.set_static_paths([payload.path])
+
     async def _move_to_cache(d: dict):
-        payload = FileData(**d)
+        payload = FileData(**d)  # type: ignore
         # If the gradio app developer is returning a URL from
         # postprocess, it means the component can display a URL
         # without it being served from the gradio server
@@ -456,14 +589,8 @@ async def async_move_files_to_cache(
             pass
         elif not block.proxy_url:
             # If the file is on a remote server, do not move it to cache.
-            if check_in_upload_folder and not client_utils.is_http_url_like(
-                payload.path
-            ):
-                path = os.path.abspath(payload.path)
-                if not is_in_or_equal(path, get_upload_folder()):
-                    raise ValueError(
-                        f"File {path} is not in the upload folder and cannot be accessed."
-                    )
+            if not client_utils.is_http_url_like(payload.path):
+                _check_allowed(payload.path, check_in_upload_folder)
             if not payload.is_stream:
                 temp_file_path = await block.async_move_resource_to_block_cache(
                     payload.path
@@ -474,10 +601,12 @@ async def async_move_files_to_cache(
                 if keep_in_cache:
                     block.keep_in_cache.add(payload.path)
 
-        url_prefix = "/stream/" if payload.is_stream else "/file="
+        url_prefix = (
+            f"{API_PREFIX}/stream/" if payload.is_stream else f"{API_PREFIX}/file="
+        )
         if block.proxy_url:
             proxy_url = block.proxy_url.rstrip("/")
-            url = f"/proxy={proxy_url}{url_prefix}{payload.path}"
+            url = f"{API_PREFIX}/proxy={proxy_url}{url_prefix}{payload.path}"
         elif client_utils.is_http_url_like(payload.path) or payload.path.startswith(
             f"{url_prefix}"
         ):
@@ -485,13 +614,13 @@ async def async_move_files_to_cache(
         else:
             url = f"{url_prefix}{payload.path}"
         payload.url = url
-
+        _mark_svg_as_safe(payload)
         return payload.model_dump()
 
     if isinstance(data, (GradioRootModel, GradioModel)):
         data = data.model_dump()
     return await client_utils.async_traverse(
-        data, _move_to_cache, client_utils.is_file_obj
+        data, _move_to_cache, client_utils.is_file_obj_with_meta
     )
 
 
@@ -501,7 +630,7 @@ def add_root_url(data: dict | list, root_url: str, previous_root_url: str | None
             file_dict["url"] = file_dict["url"][len(previous_root_url) :]
         elif client_utils.is_http_url_like(file_dict["url"]):
             return file_dict
-        file_dict["url"] = f'{root_url}{file_dict["url"]}'
+        file_dict["url"] = f"{root_url}{file_dict['url']}"
         return file_dict
 
     return client_utils.traverse(data, _add_root_url, client_utils.is_file_obj_with_url)
@@ -539,32 +668,46 @@ def resize_and_crop(img, size, crop_type="center"):
 ##################
 
 
-def audio_from_file(filename, crop_min=0, crop_max=100):
-    try:
-        audio = AudioSegment.from_file(filename)
-    except FileNotFoundError as e:
-        isfile = Path(filename).is_file()
-        msg = (
-            f"Cannot load audio from file: `{'ffprobe' if isfile else filename}` not found."
-            + " Please install `ffmpeg` in your system to use non-WAV audio file formats"
-            " and make sure `ffprobe` is in your PATH."
-            if isfile
-            else ""
-        )
-        raise RuntimeError(msg) from e
-    if crop_min != 0 or crop_max != 100:
-        audio_start = len(audio) * crop_min / 100
-        audio_end = len(audio) * crop_max / 100
-        audio = audio[audio_start:audio_end]
-    data = np.array(audio.get_array_of_samples())
-    if audio.channels > 1:
-        data = data.reshape(-1, audio.channels)
-    return audio.frame_rate, data
+def audio_from_file(
+    filename: str, crop_min: float = 0, crop_max: float = 100
+) -> tuple[int, np.ndarray]:
+    from gradio.profiling import trace_phase_sync
+
+    with trace_phase_sync("preprocess_audio_from_file"):
+        try:
+            audio = AudioSegment.from_file(filename)
+        except FileNotFoundError as e:
+            isfile = Path(filename).is_file()
+            msg = (
+                f"Cannot load audio from file: `{'ffprobe' if isfile else filename}` not found."
+                + " Please install `ffmpeg` in your system to use non-WAV audio file formats"
+                " and make sure `ffprobe` is in your PATH."
+                if isfile
+                else ""
+            )
+            raise RuntimeError(msg) from e
+        except OSError as e:
+            raise e
+        if crop_min != 0 or crop_max != 100:
+            audio_start = len(audio) * crop_min / 100
+            audio_end = len(audio) * crop_max / 100
+            audio = audio[audio_start:audio_end]
+        data = np.array(audio.get_array_of_samples())
+        if audio.channels > 1:
+            data = data.reshape(-1, audio.channels)
+        return audio.frame_rate, data
 
 
 def audio_to_file(sample_rate, data, filename, format="wav"):
-    if format == "wav":
-        data = convert_to_16_bit_wav(data)
+    # pydub's `AudioSegment` raw constructor only supports integer PCM, and
+    # interprets `sample_width=4` as int32 rather than float32. Without an
+    # explicit conversion, non-WAV formats (mp3, flac, ogg, ...) end up
+    # feeding float32 bytes through ffmpeg as `pcm_s32le`, which decodes as
+    # noise. Run the same int16 conversion for every format so the encoded
+    # output matches the input waveform regardless of `format`. See #13364.
+    if data.dtype != np.int16:
+        data = convert_to_16_bit_audio(data)
+
     audio = AudioSegment(
         data.tobytes(),
         frame_rate=sample_rate,
@@ -575,14 +718,20 @@ def audio_to_file(sample_rate, data, filename, format="wav"):
     file.close()  # type: ignore
 
 
-def convert_to_16_bit_wav(data):
+def convert_to_16_bit_audio(data):
     # Based on: https://docs.scipy.org/doc/scipy/reference/generated/scipy.io.wavfile.write.html
     warning = "Trying to convert audio automatically from {} to 16-bit int format."
     if data.dtype in [np.float64, np.float32, np.float16]:
         warnings.warn(warning.format(data.dtype))
-        data = data / np.abs(data).max()
-        data = data * 32767
-        data = data.astype(np.int16)
+        peak = np.abs(data).max()
+        if peak == 0:
+            # Silence: avoid dividing by zero (which would produce NaNs that
+            # cast to nonzero int16 garbage and turn silence into noise).
+            data = np.zeros_like(data, dtype=np.int16)
+        else:
+            data = data / peak
+            data = data * 32767
+            data = data.astype(np.int16)
     elif data.dtype == np.int32:
         warnings.warn(warning.format(data.dtype))
         data = data / 65536
@@ -607,6 +756,12 @@ def convert_to_16_bit_wav(data):
             f"{data.dtype} to 16-bit int format."
         )
     return data
+
+
+# Backwards-compatible alias: this function now handles non-WAV formats too,
+# but it was previously named `convert_to_16_bit_wav` and may be imported by
+# external code.
+convert_to_16_bit_wav = convert_to_16_bit_audio
 
 
 ##################
@@ -660,13 +815,16 @@ def _convert(image, dtype, force_copy=False, uniform=False):
     dtype_range = {
         bool: (False, True),
         np.bool_: (False, True),
-        np.bool8: (False, True),  # type: ignore
         float: (-1, 1),
-        np.float_: (-1, 1),
         np.float16: (-1, 1),
         np.float32: (-1, 1),
         np.float64: (-1, 1),
     }
+
+    if hasattr(np, "float_"):
+        dtype_range[np.float_] = dtype_range[float]  # type: ignore
+    if hasattr(np, "bool8"):
+        dtype_range[np.bool8] = dtype_range[np.bool_]  # type: ignore
 
     def _dtype_itemsize(itemsize, *dtypes):
         """Return first of `dtypes` with itemsize greater than `itemsize`
@@ -769,7 +927,13 @@ def _convert(image, dtype, force_copy=False, uniform=False):
 
     image = np.asarray(image)
     dtypeobj_in = image.dtype
-    dtypeobj_out = np.dtype("float64") if dtype is np.floating else np.dtype(dtype)
+    dtypeobj_out = (
+        dtypeobj_in
+        if dtype is np.floating
+        else np.dtype("float64")
+        if dtype is float
+        else np.dtype(dtype)
+    )
     dtype_in = dtypeobj_in.type
     dtype_out = dtypeobj_out.type
     kind_in = dtypeobj_in.kind
@@ -786,7 +950,12 @@ def _convert(image, dtype, force_copy=False, uniform=False):
     #   is a subclass of that type (e.g. `np.floating` will allow
     #   `float32` and `float64` arrays through)
 
-    if np.issubdtype(dtype_in, np.obj2sctype(dtype)):
+    if hasattr(np, "obj2sctype"):
+        is_subdtype = np.issubdtype(dtype_in, np.obj2sctype(dtype))  # type: ignore
+    else:
+        is_subdtype = np.issubdtype(dtype_in, dtypeobj_out.type)
+
+    if is_subdtype:
         if force_copy:
             image = image.copy()
         return image
@@ -897,10 +1066,6 @@ def _convert(image, dtype, force_copy=False, uniform=False):
 
 
 def ffmpeg_installed() -> bool:
-    if wasm_utils.IS_WASM:
-        # TODO: Support ffmpeg in WASM
-        return False
-
     return shutil.which("ffmpeg") is not None
 
 
@@ -912,8 +1077,6 @@ def video_is_playable(video_filepath: str) -> bool:
         .webm -> vp9
         .ogg -> theora
     """
-    from ffmpy import FFprobe, FFRuntimeError
-
     try:
         container = Path(video_filepath).suffix.lower()
         probe = FFprobe(
@@ -921,47 +1084,251 @@ def video_is_playable(video_filepath: str) -> bool:
             inputs={video_filepath: None},
         )
         output = probe.run(stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-        output = json.loads(output[0])
+        output = json.loads(output[0])  # type: ignore
         video_codec = output["streams"][0]["codec_name"]
         return (container, video_codec) in [
             (".mp4", "h264"),
+            (".mp4", "av1"),
             (".ogg", "theora"),
             (".webm", "vp9"),
+            (".webm", "vp8"),
+            (".webm", "av1"),
         ]
     # If anything goes wrong, assume the video can be played to not convert downstream
     except (FFRuntimeError, IndexError, KeyError):
         return True
 
 
-def convert_video_to_playable_mp4(video_path: str) -> str:
+# Container/codec pairs that browsers can decode. Anything outside this set has
+# to be converted before it will play back.
+PLAYABLE_AUDIO_CODECS = frozenset(
+    {
+        (".wav", "pcm_s16le"),
+        (".wav", "pcm_s24le"),
+        (".wav", "pcm_f32le"),
+        (".wav", "pcm_u8"),
+        (".mp3", "mp3"),
+        (".m4a", "aac"),
+        (".m4a", "alac"),
+        (".mp4", "aac"),
+        (".aac", "aac"),
+        (".flac", "flac"),
+        (".ogg", "vorbis"),
+        (".ogg", "opus"),
+        (".oga", "vorbis"),
+        (".oga", "opus"),
+        (".opus", "opus"),
+        (".weba", "opus"),
+        (".webm", "opus"),
+        (".webm", "vorbis"),
+    }
+)
+
+
+def audio_is_playable(audio_filepath: str) -> bool:
+    """Determines if an audio file is playable in the browser.
+
+    Audio is playable if it has a playable container and codec, e.g.
+        .wav -> pcm_s16le
+        .mp3 -> mp3
+        .m4a -> aac
+    Containers such as AIFF are not decodable by any major browser regardless of
+    the codec inside them.
+    """
+    try:
+        container = Path(audio_filepath).suffix.lower()
+        probe = FFprobe(
+            global_options="-show_format -show_streams -select_streams a -print_format json",
+            inputs={audio_filepath: None},
+        )
+        output = probe.run(stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        output = json.loads(output[0])  # type: ignore
+        audio_codec = output["streams"][0]["codec_name"]
+        return (container, audio_codec) in PLAYABLE_AUDIO_CODECS
+    # If anything goes wrong, assume the audio can be played so that we do not
+    # convert downstream.
+    except (FFRuntimeError, IndexError, KeyError):
+        return True
+
+
+# Browser-playable codecs mapped to a container that can hold them, so a file
+# whose container is the only problem needs remuxing rather than re-encoding.
+# The pairs match the entries in `audio_is_playable`.
+REMUXABLE_AUDIO_CODECS = {
+    "aac": ".m4a",
+    "alac": ".m4a",
+    "mp3": ".mp3",
+    "flac": ".flac",
+    "opus": ".ogg",
+    "vorbis": ".ogg",
+}
+
+
+def _first_audio_codec(audio_path: str) -> str | None:
+    """Return the codec of a file's first audio stream, or None if unprobeable."""
+    try:
+        probe = FFprobe(
+            global_options="-show_streams -select_streams a -print_format json",
+            inputs={audio_path: None},
+        )
+        output = probe.run(stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        return json.loads(output[0])["streams"][0]["codec_name"]  # type: ignore
+    except (FFRuntimeError, IndexError, KeyError, ValueError):
+        return None
+
+
+def convert_audio_to_playable(audio_path: str, cache_dir: str) -> str:
+    """Convert audio to a browser-playable file, returning the original on failure.
+
+    Unlike the video equivalent the output is written to the cache rather than
+    next to the source: `.aif` and `.wav` share a directory far more often than
+    the video containers do, so writing alongside would clobber the user's files.
+    """
+    temp_dir = Path(cache_dir) / hash_file(audio_path)
+    temp_dir.mkdir(exist_ok=True, parents=True)
+    stem = Path(audio_path).stem
+
+    def to_playable(output_path: Path, copy_streams: bool) -> None:
+        ff = FFmpeg(
+            inputs={str(audio_path): None},
+            # Only the first audio stream is carried over when copying: a
+            # Matroska file can hold cover art or subtitle streams that the
+            # target container would reject, failing the whole mux.
+            outputs={str(output_path): "-map 0:a:0 -c copy" if copy_streams else None},
+            global_options="-y -loglevel quiet",
+        )
+        ff.run()
+
+    # A container browsers cannot play often still holds a codec they can, in
+    # which case only the container has to change. Copying the stream is
+    # near-instant and lossless, where re-encoding to wav is slow and inflates
+    # a compressed file into raw PCM.
+    remux_suffix = REMUXABLE_AUDIO_CODECS.get(_first_audio_codec(audio_path) or "")
+    if remux_suffix:
+        remuxed_path = temp_dir / f"{stem}{remux_suffix}"
+        if remuxed_path.exists():
+            return str(remuxed_path)
+        try:
+            to_playable(remuxed_path, copy_streams=True)
+            return str(remuxed_path)
+        except FFRuntimeError:
+            # The stream turned out not to be muxable into that container after
+            # all; fall back to a full re-encode.
+            pass
+
+    output_path = temp_dir / f"{stem}.wav"
+    if output_path.exists():
+        return str(output_path)
+    try:
+        to_playable(output_path, copy_streams=False)
+    except FFRuntimeError as e:
+        print(f"Error converting audio to browser-playable format {str(e)}")
+        return str(audio_path)
+    return str(output_path)
+
+
+# Codecs that both fit in an mp4 container and are playable in browsers, so a
+# file holding them only needs remuxing rather than re-encoding. The video set
+# matches the mp4 entries in `video_is_playable`.
+MP4_COMPATIBLE_VIDEO_CODECS = frozenset({"h264", "av1"})
+MP4_COMPATIBLE_AUDIO_CODECS = frozenset({"aac", "mp3"})
+
+
+def _first_stream_codecs(video_path: str) -> tuple[str | None, str | None] | None:
+    """Return the first (video codec, audio codec) of a media file.
+
+    Either element is None when the file has no stream of that kind. Returns
+    None if the file could not be probed at all.
+    """
+    try:
+        probe = FFprobe(
+            global_options="-show_streams -print_format json",
+            inputs={video_path: None},
+        )
+        output = probe.run(stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+        streams = json.loads(output[0])["streams"]  # type: ignore
+    except (FFRuntimeError, IndexError, KeyError, ValueError):
+        return None
+    codecs: dict[str, str] = {}
+    for stream in streams:
+        codec_type = stream.get("codec_type")
+        if codec_type in ("video", "audio") and codec_type not in codecs:
+            codecs[codec_type] = stream.get("codec_name", "")
+    return codecs.get("video"), codecs.get("audio")
+
+
+def _can_remux_to_mp4(video_path: str) -> bool:
+    """Whether the file's streams can be copied into an mp4 as-is."""
+    codecs = _first_stream_codecs(video_path)
+    if codecs is None:
+        return False
+    video_codec, audio_codec = codecs
+    return video_codec in MP4_COMPATIBLE_VIDEO_CODECS and (
+        audio_codec is None or audio_codec in MP4_COMPATIBLE_AUDIO_CODECS
+    )
+
+
+def convert_video_to_playable_mp4(video_path: str, cache_dir: str | None = None) -> str:
     """Convert the video to mp4. If something goes wrong return the original video."""
-    from ffmpy import FFmpeg, FFRuntimeError
+
+    def to_mp4(output_path: Path, copy_streams: bool) -> None:
+        ff = FFmpeg(
+            inputs={video_path: None},
+            # Only the first video and audio stream are carried over when
+            # copying. A Matroska file can hold subtitle or attachment streams
+            # that an mp4 cannot, and those would fail the mux; it can also hold
+            # further audio tracks that `_can_remux_to_mp4` never checked. The
+            # `?` keeps audio optional so silent videos still work.
+            outputs={
+                str(output_path): "-map 0:v:0 -map 0:a:0? -c copy"
+                if copy_streams
+                else None
+            },
+            global_options="-y -loglevel quiet",
+        )
+        ff.run()
+
+    # A container that browsers cannot play (.mkv, say) often still holds
+    # streams they can, in which case only the container has to change. Copying
+    # the streams is near-instant and lossless, where a re-encode of a large
+    # file takes minutes and degrades quality (#13527).
+    can_remux = _can_remux_to_mp4(video_path)
+
+    # The result goes to a fresh directory rather than next to the source.
+    # `Path(video_path).with_suffix(".mp4")` overwrites an unrelated `clip.mp4`
+    # sitting beside `clip.mkv`, and for a non-playable `.mp4` it resolves to the
+    # input itself, rewriting the user's own file in place. Writing elsewhere
+    # also means the input no longer has to be copied aside first, which for a
+    # multi-gigabyte upload cost more than the remux it was protecting.
+    # `get_upload_folder()` only names the cache, it does not create it, and
+    # `mkdtemp` will not create missing parents.
+    cache_root = Path(cache_dir or get_upload_folder())
+    cache_root.mkdir(parents=True, exist_ok=True)
+    output_dir = Path(tempfile.mkdtemp(dir=cache_root))
+    output_path = output_dir / f"{Path(video_path).stem}.mp4"
 
     try:
-        with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-            output_path = Path(video_path).with_suffix(".mp4")
-            shutil.copy2(video_path, tmp_file.name)
-            # ffmpeg will automatically use h264 codec (playable in browser) when converting to mp4
-            ff = FFmpeg(
-                inputs={str(tmp_file.name): None},
-                outputs={str(output_path): None},
-                global_options="-y -loglevel quiet",
-            )
-            ff.run()
+        if can_remux:
+            try:
+                to_mp4(output_path, copy_streams=True)
+                return str(output_path)
+            except FFRuntimeError:
+                # The streams turned out not to be muxable into an mp4
+                # after all; fall back to a full re-encode.
+                pass
+        # ffmpeg will automatically use h264 codec (playable in browser) when converting to mp4
+        to_mp4(output_path, copy_streams=False)
     except FFRuntimeError as e:
         print(f"Error converting video to browser-playable format {str(e)}")
-        output_path = video_path
-    finally:
-        # Remove temp file
-        os.remove(tmp_file.name)  # type: ignore
+        # The original is returned, so nothing will ever reference this
+        # directory or the partial file ffmpeg may have left in it, and the
+        # cache cleanup only tracks paths that were handed out.
+        shutil.rmtree(output_dir, ignore_errors=True)
+        return str(video_path)
     return str(output_path)
 
 
 def get_video_length(video_path: str | Path):
-    if wasm_utils.IS_WASM:
-        raise wasm_utils.WasmUnsupportedError(
-            "Video duration is not supported in the Wasm mode."
-        )
     duration = subprocess.check_output(
         [
             "ffprobe",

@@ -1,40 +1,45 @@
 <script lang="ts">
 	import type { HTMLImgAttributes } from "svelte/elements";
-	interface Props extends HTMLImgAttributes {
-		"data-testid"?: string;
-	}
-	type $$Props = Props;
 
-	import { resolve_wasm_src } from "@gradio/wasm/svelte";
+	let {
+		src = "",
+		restProps = {},
+		data_testid,
+		class_names = [],
+		onload,
+		...imgProps
+	}: {
+		src?: string;
+		restProps?: Record<string, any>;
+		data_testid?: string;
+		class_names?: string[];
+		onload?: HTMLImgAttributes["onload"];
+		[key: string]: any;
+	} = $props();
 
-	export let src: HTMLImgAttributes["src"] = undefined;
+	const without_class = ({
+		class: _class,
+		...props
+	}: Record<string, any>): Record<string, any> => props;
 
-	let resolved_src: typeof src;
-
-	// The `src` prop can be updated before the Promise from `resolve_wasm_src` is resolved.
-	// In such a case, the resolved value for the old `src` has to be discarded,
-	// This variable `latest_src` is used to pick up only the value resolved for the latest `src` prop.
-	let latest_src: typeof src;
-	$: {
-		// In normal (non-Wasm) Gradio, the `<img>` element should be rendered with the passed `src` props immediately
-		// without waiting for `resolve_wasm_src()` to resolve.
-		// If it waits, a blank image is displayed until the async task finishes
-		// and it leads to undesirable flickering.
-		// So set `src` to `resolved_src` here.
-		resolved_src = src;
-
-		latest_src = src;
-		const resolving_src = src;
-		resolve_wasm_src(resolving_src).then((s) => {
-			if (latest_src === resolving_src) {
-				resolved_src = s;
-			}
-		});
-	}
+	let rest_img_props = $derived(without_class(restProps));
+	let direct_img_props = $derived(without_class(imgProps));
+	let classes = $derived(
+		[class_names.join(" "), restProps.class, imgProps.class]
+			.filter(Boolean)
+			.join(" ")
+	);
 </script>
 
 <!-- svelte-ignore a11y-missing-attribute -->
-<img src={resolved_src} {...$$restProps} />
+<img
+	{src}
+	class={classes}
+	data-testid={data_testid}
+	{...rest_img_props}
+	{...direct_img_props}
+	{onload}
+/>
 
 <style>
 	img {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import time
 import typing
 import urllib.parse
 import warnings
@@ -9,14 +10,16 @@ from dataclasses import dataclass, field
 
 import fastapi
 from fastapi.responses import RedirectResponse
-from huggingface_hub import HfFolder, whoami
+from huggingface_hub import get_token, whoami
 
-from .utils import get_space
+from gradio.utils import get_space
 
 OAUTH_CLIENT_ID = os.environ.get("OAUTH_CLIENT_ID")
 OAUTH_CLIENT_SECRET = os.environ.get("OAUTH_CLIENT_SECRET")
 OAUTH_SCOPES = os.environ.get("OAUTH_SCOPES")
 OPENID_PROVIDER_URL = os.environ.get("OPENID_PROVIDER_URL")
+
+MAX_REDIRECTS = 2
 
 
 def attach_oauth(app: fastapi.FastAPI):
@@ -31,6 +34,7 @@ def attach_oauth(app: fastapi.FastAPI):
     # Add `/login/huggingface`, `/login/callback` and `/logout` routes to enable OAuth in the Gradio app.
     # If the app is running in a Space, OAuth is enabled normally. Otherwise, we mock the "real" routes to make the
     # user log in with a fake user profile - without any calls to hf.co.
+
     if get_space() is not None:
         _add_oauth_routes(app)
     else:
@@ -43,7 +47,7 @@ def attach_oauth(app: fastapi.FastAPI):
     # ^ if we change the session cookie format in the future, we can bump the version of the session secret to make
     #   sure cookies are invalidated. Otherwise some users with an old cookie format might get a HTTP 500 error.
     app.add_middleware(
-        SessionMiddleware,
+        SessionMiddleware,  # type: ignore
         secret_key=hashlib.sha256(session_secret.encode()).hexdigest(),
         same_site="none",
         https_only=True,
@@ -66,6 +70,7 @@ def _add_oauth_routes(app: fastapi.FastAPI) -> None:
         "OAuth is required but {} environment variable is not set. Make sure you've enabled OAuth in your Space by"
         " setting `hf_oauth: true` in the Space metadata."
     )
+
     if OAUTH_CLIENT_ID is None:
         raise ValueError(msg.format("OAUTH_CLIENT_ID"))
     if OAUTH_CLIENT_SECRET is None:
@@ -104,18 +109,37 @@ def _add_oauth_routes(app: fastapi.FastAPI) -> None:
             # repeatedly. Since cookies cannot get bigger than 4kb, the token will be truncated at some point - hence
             # losing the state. A workaround is to delete the cookie and redirect the user to the login page again.
             # See https://github.com/lepture/authlib/issues/622 for more details.
-            login_uri = "/login/huggingface"
-            if "_target_url" in request.query_params:
-                login_uri += (
-                    "?"
-                    + urllib.parse.urlencode(  # Keep same _target_url as before
-                        {"_target_url": request.query_params["_target_url"]}
-                    )
-                )
+
+            # Delete all keys that are related to the OAuth state, just in case
             for key in list(request.session.keys()):
-                # Delete all keys that are related to the OAuth state
                 if key.startswith("_state_huggingface"):
                     request.session.pop(key)
+
+            # Parse query params
+            nb_redirects = int(request.query_params.get("_nb_redirects", 0))
+            target_url = request.query_params.get("_target_url")
+
+            # Build /login URI with the same query params as before and bump nb_redirects count
+            query_params: dict[str, str | int] = {"_nb_redirects": nb_redirects + 1}
+            if target_url:
+                query_params["_target_url"] = target_url
+
+            login_uri = f"/login/huggingface?{urllib.parse.urlencode(query_params)}"
+
+            # If the user is redirected more than 3 times, it is very likely that the cookie is not working properly.
+            # (e.g. browser is blocking third-party cookies in iframe). In this case, redirect the user in the
+            # non-iframe view.
+            if nb_redirects > MAX_REDIRECTS:
+                host = os.environ.get("SPACE_HOST")
+                if host is None:  # cannot happen in a Space
+                    raise RuntimeError(
+                        "Gradio is not running in a Space (SPACE_HOST environment variable is not set)."
+                        " Cannot redirect to non-iframe view."
+                    ) from None
+                host_url = "https://" + host.rstrip("/")
+                return RedirectResponse(host_url + login_uri)
+
+            # Redirect the user to the login page again
             return RedirectResponse(login_uri)
 
         # OAuth login worked => store the user info in the session and redirect
@@ -155,15 +179,19 @@ def _add_mocked_oauth_routes(app: fastapi.FastAPI) -> None:
     @app.get("/login/callback")
     async def oauth_redirect_callback(request: fastapi.Request) -> RedirectResponse:
         """Endpoint that handles the OAuth callback."""
-        request.session["oauth_info"] = mocked_oauth_info
+        # `mocked_oauth_info` is computed once at startup, so its `expires_at` would
+        # eventually be in the past and every login would be treated as expired.
+        request.session["oauth_info"] = {
+            **mocked_oauth_info,
+            "expires_at": int(time.time()) + 8 * 60 * 60,  # 8 hours
+        }
         return _redirect_to_target(request)
 
     @app.get("/logout")
     async def oauth_logout(request: fastapi.Request) -> RedirectResponse:
         """Endpoint that logs out the user (e.g. delete cookie session)."""
         request.session.pop("oauth_info", None)
-        logout_url = str(request.url).replace("/logout", "/")  # preserve query params
-        return RedirectResponse(url=logout_url)
+        return _redirect_to_target(request)
 
 
 def _generate_redirect_uri(request: fastapi.Request) -> str:
@@ -174,13 +202,22 @@ def _generate_redirect_uri(request: fastapi.Request) -> str:
         # otherwise => keep query params
         target = "/?" + urllib.parse.urlencode(request.query_params)
 
+    # On Spaces, the redirect URI must always be https://<space_host>/login/callback,
+    # so if a custom domain is used, we need to replace it with the hf.space URL
+    if space_host := os.getenv("SPACE_HOST"):
+        print(f"SPACE_HOST: {space_host}")
+        space_host = space_host.split(",")[
+            0
+        ]  # When custom domain is used, SPACE_HOST is a comma-separated list
+        print(f"SPACE_HOST after split: {space_host}")
+        redirect_uri = f"https://{space_host}/login/callback?{urllib.parse.urlencode({'_target_url': target})}"
+        print(f"Redirect URI: {redirect_uri}")
+        return redirect_uri
+
     redirect_uri = request.url_for("oauth_redirect_callback").include_query_params(
         _target_url=target
     )
     redirect_uri_as_str = str(redirect_uri)
-    if redirect_uri.netloc.endswith(".hf.space"):
-        # In Space, FastAPI redirect as http but we want https
-        redirect_uri_as_str = redirect_uri_as_str.replace("http://", "https://")
     return redirect_uri_as_str
 
 
@@ -188,7 +225,34 @@ def _redirect_to_target(
     request: fastapi.Request, default_target: str = "/"
 ) -> RedirectResponse:
     target = request.query_params.get("_target_url", default_target)
-    return RedirectResponse(target)
+    # Prevent open redirect by stripping scheme/host and only using the path.
+    parsed = urllib.parse.urlparse(target)
+    # Collapse any leading slashes/backslashes so the result is always a
+    # single-slash local path. urlparse leaves 4+ leading slashes in `.path`
+    # (e.g. "////evil.com" -> "//evil.com"), which browsers resolve as a
+    # scheme-relative URL to an external host — restoring the CVE-2026-28415
+    # open redirect (GHSA-vwgg-rgg9-xx9q).
+    safe_target = "/" + (parsed.path or "").lstrip("/\\")
+    if parsed.query:
+        safe_target += "?" + parsed.query
+    if parsed.fragment:
+        safe_target += "#" + parsed.fragment
+    return RedirectResponse(safe_target)
+
+
+def _get_valid_oauth_info_from_session(
+    session: typing.MutableMapping[str, typing.Any],
+) -> dict[str, typing.Any] | None:
+    oauth_info = session.get("oauth_info")
+    if oauth_info is None:
+        return None
+
+    expires_at = oauth_info.get("expires_at")
+    if expires_at is not None and expires_at < time.time():
+        session.pop("oauth_info", None)
+        return None
+
+    return oauth_info
 
 
 @dataclass
@@ -273,7 +337,7 @@ class OAuthToken:
 
 
 def _get_mocked_oauth_info() -> typing.Dict:
-    token = HfFolder.get_token()
+    token = get_token()
     if token is None:
         raise ValueError(
             "Your machine must be logged in to HF to debug a Gradio app locally. Please"
@@ -291,12 +355,12 @@ def _get_mocked_oauth_info() -> typing.Dict:
         )
 
     return {
-        "access_token": token,
+        "access_token": "mock-oauth-token-for-local-dev",
         "token_type": "bearer",
         "expires_in": 3600,
         "id_token": "AAAAAAAAAAAAAAAAAAAAAAAAAA",
         "scope": "openid profile",
-        "expires_at": 1691676444,
+        "expires_at": int(time.time()) + 8 * 60 * 60,  # 8 hours
         "userinfo": {
             "sub": "11111111111111111111111",
             "name": user["fullname"],

@@ -1,9 +1,9 @@
 # Make function to find classes in target directory
 import os
-import librosa
+import librosa  # type: ignore
 import torch
 import numpy as np
-from torchaudio.transforms import Resample
+from torchaudio.transforms import Resample  # type: ignore
 
 SAMPLE_RATE = 44100
 AUDIO_LEN = 2.90
@@ -25,7 +25,7 @@ def find_classes(directory: str):
     # 3. Crearte a dictionary of index labels (computers prefer numerical rather than string labels)
     class_to_idx = {cls_name: i for i, cls_name in enumerate(classes)}
     return classes, class_to_idx
-    
+
 def resample(wav, sample_rate, new_sample_rate):
     if wav.shape[0] >= 2:
         wav = torch.mean(wav, dim=0)
@@ -61,9 +61,9 @@ def normalize(image, mean=None, std=None):
 def compute_melspec(wav, sample_rate=SAMPLE_RATE):
     melspec = librosa.feature.melspectrogram(
         y=wav,
-        sr=sample_rate, 
-        n_fft=N_FFT, 
-        fmin=F_MIN, 
+        sr=sample_rate,
+        n_fft=N_FFT,
+        fmin=F_MIN,
         fmax=F_MAX,
         n_mels=N_MELS,
         hop_length=HOP_LEN

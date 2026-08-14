@@ -5,21 +5,19 @@ import numpy as np
 import pandas as pd
 import pytest
 from gradio_client import utils as client_utils
-from gradio_pdf import PDF
 
 import gradio as gr
 from gradio import processing_utils
 from gradio.components.base import Component
 from gradio.data_classes import GradioModel, GradioRootModel
+from gradio.templates import TextArea
 
 os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
 
 
 class TestGettingComponents:
     def test_component_function(self):
-        assert isinstance(
-            gr.components.component("textarea", render=False), gr.templates.TextArea
-        )
+        assert isinstance(gr.components.component("textarea", render=False), TextArea)
 
     @pytest.mark.parametrize(
         "component, render, unrender, should_be_rendered",
@@ -102,19 +100,28 @@ def test_constructor_args():
 
 
 def test_template_component_configs(io_components):
+    """
+    This test ensures that every "template" (the classes defined in gradio/template.py)
+    has all of the arguments that its parent class has. E.g. the constructor of the `Sketchpad`
+    class should have all of the arguments that the constructor of `ImageEditor` has
+    """
     template_components = [c for c in io_components if getattr(c, "is_template", False)]
     for component in template_components:
         component_parent_class = inspect.getmro(component)[1]
         template_config = component().get_config()
         parent_config = component_parent_class().get_config()
-        assert set(parent_config.keys()).issubset(set(template_config.keys()))
+        parent_keys = set(parent_config.keys())
+        template_keys = set(template_config.keys())
+        missing_keys = parent_keys - template_keys
+        if missing_keys:
+            raise AssertionError(
+                f"Template {component.__name__} is missing keys from parent {component_parent_class.__name__}: {missing_keys}"
+            )
 
 
 def test_component_example_values(io_components):
     for component in io_components:
-        if component == PDF:
-            continue
-        elif component in [gr.BarPlot, gr.LinePlot, gr.ScatterPlot]:
+        if component in [gr.BarPlot, gr.LinePlot, gr.ScatterPlot]:
             c: Component = component(x="x", y="y")
         else:
             c: Component = component()
@@ -123,10 +130,10 @@ def test_component_example_values(io_components):
 
 def test_component_example_payloads(io_components):
     for component in io_components:
-        if component == PDF:
-            continue
-        elif component in [gr.BarPlot, gr.LinePlot, gr.ScatterPlot]:
+        if issubclass(component, gr.components.NativePlot):
             c: Component = component(x="x", y="y")
+        elif component == gr.FileExplorer:
+            c: Component = component(root_dir="gradio")
         else:
             c: Component = component()
         data = c.example_payload()
@@ -141,4 +148,31 @@ def test_component_example_payloads(io_components):
                 data = c.data_model(**data)  # type: ignore
             elif issubclass(c.data_model, GradioRootModel):  # type: ignore
                 data = c.data_model(root=data)  # type: ignore
-        c.preprocess(data)
+        c.preprocess(data)  # type: ignore
+
+
+def test_all_io_components_are_pickleable(io_components):
+    import pickle
+
+    for component in io_components:
+        if component in [gr.BarPlot, gr.LinePlot, gr.ScatterPlot]:
+            c: Component = component(x="x", y="y")
+        elif component == gr.FileExplorer:
+            c: Component = component(root_dir="gradio")
+        else:
+            c: Component = component()
+        pickled = pickle.dumps(c)
+        unpickled = pickle.loads(pickled)
+        assert c.get_config() == unpickled.get_config()
+
+
+def test_all_components_have_change_event(io_components):
+    """
+    Every component has a `value` that can be set programmatically (e.g. a
+    Button's value is its label), so every component should expose a `.change()`
+    event listener that can be wired up without erroring.
+    See https://github.com/gradio-app/gradio/issues/5309.
+    """
+    for component in io_components:
+        with gr.Blocks():
+            component().change(lambda: None)

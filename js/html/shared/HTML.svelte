@@ -1,28 +1,575 @@
-<script lang="ts">
-	import { createEventDispatcher } from "svelte";
-	export let elem_classes: string[] = [];
-	export let value: string;
-	export let visible = true;
-	export let min_height = false;
-
-	const dispatch = createEventDispatcher<{ change: undefined }>();
-
-	$: value, dispatch("change");
+<script module lang="ts">
+	// Shared across instances so a component whose head script was already
+	// added by another instance can await that in-flight load instead of
+	// running js_on_load before the script has executed.
+	const head_script_loads = new Map<string, Promise<void>>();
 </script>
 
-<div
-	class="prose {elem_classes.join(' ')}"
-	class:min={min_height}
-	class:hide={!visible}
->
-	{@html value}
-</div>
+<script lang="ts">
+	import { onDestroy } from "svelte";
+	import Handlebars from "handlebars";
+	import type { Snippet } from "svelte";
+
+	let {
+		elem_classes = [],
+		props = {},
+		html_template = "${value}",
+		css_template = "",
+		js_on_load = null,
+		head = null,
+		visible = true,
+		autoscroll = false,
+		apply_default_css = true,
+		component_class_name = "HTML",
+		upload = null,
+		server = {},
+		onevent,
+		onupdate_value,
+		children
+	}: {
+		// every one of these has a default in the destructure above
+		elem_classes?: string[];
+		props?: Record<string, any>;
+		html_template?: string;
+		css_template?: string;
+		js_on_load?: string | null;
+		head?: string | null;
+		visible?: boolean;
+		autoscroll?: boolean;
+		apply_default_css?: boolean;
+		component_class_name?: string;
+		upload?: ((file: File) => Promise<{ path: string; url: string }>) | null;
+		server?: Record<string, (...args: any[]) => Promise<any>>;
+		onevent?: (detail: { type: "click" | "submit"; data: any }) => void;
+		onupdate_value?: (detail: {
+			data: any;
+			property: "value" | "label" | "visible";
+		}) => void;
+		children?: Snippet;
+	} = $props();
+
+	let [has_children, pre_html_template, post_html_template] = $derived.by(
+		() => {
+			if (html_template.includes("@children") && children) {
+				const parts = html_template.split("@children");
+				return [true, parts[0] || "", parts.slice(1).join("@children") || ""];
+			}
+			return [false, html_template, ""];
+		}
+	);
+
+	let old_props = $state($state.snapshot(props));
+	type WatchEntry = { props: string[]; callback: () => void };
+	let watch_entries: WatchEntry[] = [];
+
+	function watch(propOrProps: string | string[], callback: () => void): void {
+		const prop_list = Array.isArray(propOrProps) ? propOrProps : [propOrProps];
+		watch_entries.push({ props: prop_list, callback });
+	}
+
+	function fire_watchers(changed_keys: string[]): void {
+		const seen = new Set<WatchEntry>();
+		for (const entry of watch_entries) {
+			if (entry.props.some((k) => changed_keys.includes(k))) {
+				seen.add(entry);
+			}
+		}
+		for (const entry of seen) {
+			try {
+				entry.callback();
+			} catch (e) {
+				console.error("Error in watch callback:", e);
+			}
+		}
+	}
+
+	const trigger = (
+		event_type: "click" | "submit",
+		event_data: any = {}
+	): void => {
+		onevent?.({ type: event_type, data: event_data });
+	};
+
+	let element: HTMLDivElement;
+	let pre_element: HTMLDivElement;
+	let post_element: HTMLDivElement;
+	let scrollable_parent: HTMLElement | null = null;
+	let random_id = `html-${Math.random().toString(36).substring(2, 11)}`;
+	let style_element: HTMLStyleElement | null = null;
+	let reactiveProps: Record<string, any> = {};
+	let currentHtml = $state("");
+	let currentPreHtml = $state("");
+	let currentPostHtml = $state("");
+	let currentCss = $state("");
+	let renderScheduled = $state(false);
+	let mounted = $state(false);
+	let html_error_message: string | null = $state(null);
+	let css_error_message: string | null = $state(null);
+
+	function get_scrollable_parent(element: HTMLElement): HTMLElement | null {
+		let parent = element.parentElement;
+		while (parent) {
+			const style = window.getComputedStyle(parent);
+			if (
+				style.overflow === "auto" ||
+				style.overflow === "scroll" ||
+				style.overflowY === "auto" ||
+				style.overflowY === "scroll"
+			) {
+				return parent;
+			}
+			parent = parent.parentElement;
+		}
+		return null;
+	}
+
+	function is_at_bottom(): boolean {
+		if (!element) return true;
+		if (!scrollable_parent) {
+			return (
+				window.innerHeight + window.scrollY >=
+				document.documentElement.scrollHeight - 100
+			);
+		}
+		return (
+			scrollable_parent.offsetHeight + scrollable_parent.scrollTop >=
+			scrollable_parent.scrollHeight - 100
+		);
+	}
+
+	function scroll_to_bottom(): void {
+		if (!element) return;
+		if (scrollable_parent) {
+			scrollable_parent.scrollTo(0, scrollable_parent.scrollHeight);
+		} else {
+			window.scrollTo(0, document.documentElement.scrollHeight);
+		}
+	}
+
+	async function scroll_on_html_update(): Promise<void> {
+		if (!autoscroll || !element) return;
+		if (!scrollable_parent) {
+			scrollable_parent = get_scrollable_parent(element);
+		}
+		if (is_at_bottom()) {
+			await new Promise((resolve) => setTimeout(resolve, 300));
+			scroll_to_bottom();
+		}
+	}
+
+	function render_template(
+		template: string,
+		props: Record<string, any>,
+		language: "html" | "css" = "html"
+	): string {
+		try {
+			const handlebarsTemplate = Handlebars.compile(template);
+			const handlebarsRendered = handlebarsTemplate(props);
+
+			const propKeys = Object.keys(props);
+			const propValues = Object.values(props);
+			const templateFunc = new Function(
+				...propKeys,
+				`return \`${handlebarsRendered}\`;`
+			);
+			if (language === "html") {
+				html_error_message = null;
+			} else if (language === "css") {
+				css_error_message = null;
+			}
+			return templateFunc(...propValues);
+		} catch (e) {
+			console.error("Error evaluating template:", e);
+			if (language === "html") {
+				html_error_message = e instanceof Error ? e.message : String(e);
+			} else if (language === "css") {
+				css_error_message = e instanceof Error ? e.message : String(e);
+			}
+			return "";
+		}
+	}
+
+	function update_css(): void {
+		if (typeof document === "undefined") return;
+		if (!style_element) {
+			style_element = document.createElement("style");
+			document.head.appendChild(style_element);
+		}
+		currentCss = render_template(css_template, reactiveProps, "css");
+		if (currentCss) {
+			style_element.textContent = `#${random_id} { ${currentCss} }`;
+		} else {
+			style_element.textContent = "";
+		}
+	}
+
+	onDestroy(() => style_element?.remove());
+
+	function updateDOM(
+		_element: HTMLElement | undefined,
+		oldHtml: string,
+		newHtml: string
+	): void {
+		if (!_element || oldHtml === newHtml) return;
+
+		const tempContainer = document.createElement("div");
+		tempContainer.innerHTML = newHtml;
+
+		const oldNodes = Array.from(_element.childNodes);
+		const newNodes = Array.from(tempContainer.childNodes);
+
+		const maxLength = Math.max(oldNodes.length, newNodes.length);
+
+		for (let i = 0; i < maxLength; i++) {
+			const oldNode = oldNodes[i];
+			const newNode = newNodes[i];
+
+			if (!oldNode && newNode) {
+				_element.appendChild(newNode.cloneNode(true));
+			} else if (oldNode && !newNode) {
+				_element.removeChild(oldNode);
+			} else if (oldNode && newNode) {
+				updateNode(oldNode, newNode);
+			}
+		}
+	}
+
+	function updateNode(oldNode: Node, newNode: Node): void {
+		if (
+			oldNode.nodeType === Node.TEXT_NODE &&
+			newNode.nodeType === Node.TEXT_NODE
+		) {
+			if (oldNode.textContent !== newNode.textContent) {
+				oldNode.textContent = newNode.textContent;
+			}
+			return;
+		}
+
+		if (
+			oldNode.nodeType === Node.ELEMENT_NODE &&
+			newNode.nodeType === Node.ELEMENT_NODE
+		) {
+			const oldElement = oldNode as Element;
+			const newElement = newNode as Element;
+
+			if (oldElement.tagName !== newElement.tagName) {
+				oldNode.parentNode?.replaceChild(newNode.cloneNode(true), oldNode);
+				return;
+			}
+
+			const oldAttrs = Array.from(oldElement.attributes);
+			const newAttrs = Array.from(newElement.attributes);
+
+			for (const attr of oldAttrs) {
+				if (!newElement.hasAttribute(attr.name)) {
+					oldElement.removeAttribute(attr.name);
+				}
+			}
+
+			for (const attr of newAttrs) {
+				if (oldElement.getAttribute(attr.name) !== attr.value) {
+					oldElement.setAttribute(attr.name, attr.value);
+
+					if (
+						attr.name === "value" &&
+						(oldElement.tagName === "INPUT" ||
+							oldElement.tagName === "TEXTAREA" ||
+							oldElement.tagName === "SELECT")
+					) {
+						(
+							oldElement as
+								| HTMLInputElement
+								| HTMLTextAreaElement
+								| HTMLSelectElement
+						).value = attr.value;
+					}
+				}
+			}
+
+			const oldChildren = Array.from(oldElement.childNodes);
+			const newChildren = Array.from(newElement.childNodes);
+			const maxChildren = Math.max(oldChildren.length, newChildren.length);
+
+			for (let i = 0; i < maxChildren; i++) {
+				const oldChild = oldChildren[i];
+				const newChild = newChildren[i];
+
+				if (!oldChild && newChild) {
+					oldElement.appendChild(newChild.cloneNode(true));
+				} else if (oldChild && !newChild) {
+					oldElement.removeChild(oldChild);
+				} else if (oldChild && newChild) {
+					updateNode(oldChild, newChild);
+				}
+			}
+		} else {
+			oldNode.parentNode?.replaceChild(newNode.cloneNode(true), oldNode);
+		}
+	}
+
+	function renderHTML(): void {
+		if (has_children) {
+			const newPreHtml = render_template(
+				pre_html_template,
+				reactiveProps,
+				"html"
+			);
+			updateDOM(pre_element, currentPreHtml, newPreHtml);
+			currentPreHtml = newPreHtml;
+			const newPostHtml = render_template(
+				post_html_template,
+				reactiveProps,
+				"html"
+			);
+			updateDOM(post_element, currentPostHtml, newPostHtml);
+			currentPostHtml = newPostHtml;
+		} else {
+			const newHtml = render_template(html_template, reactiveProps, "html");
+			updateDOM(element, currentHtml, newHtml);
+			currentHtml = newHtml;
+		}
+		if (autoscroll) {
+			scroll_on_html_update();
+		}
+	}
+
+	function scheduleRender(): void {
+		if (!renderScheduled) {
+			renderScheduled = true;
+			queueMicrotask(() => {
+				renderScheduled = false;
+				renderHTML();
+				update_css();
+			});
+		}
+	}
+
+	async function loadHead(headHtml: string): Promise<void> {
+		if (!headHtml) return;
+		const parser = new DOMParser();
+		const doc = parser.parseFromString(`<head>${headHtml}</head>`, "text/html");
+		const promises: Promise<void>[] = [];
+		for (const el of Array.from(doc.head.children)) {
+			if (el.tagName === "SCRIPT") {
+				const parsed_script = el as HTMLScriptElement;
+				const src = parsed_script.src;
+				if (src) {
+					const in_flight = head_script_loads.get(src);
+					if (in_flight) {
+						promises.push(in_flight);
+						continue;
+					}
+					// selector-free dedupe: author-provided src may contain `]` etc.
+					// that would break a querySelector string.
+					if (Array.from(document.scripts).some((s) => s.src === src)) continue;
+					const script = document.createElement("script");
+					// Created scripts default to force-async; copy the author's intent
+					// so a plain <script src> keeps document order.
+					script.async = (el as HTMLScriptElement).async;
+					script.src = src;
+					const load = new Promise<void>((resolve, reject) => {
+						script.onload = () => resolve();
+						script.onerror = () =>
+							reject(new Error(`Failed to load script: ${src}`));
+					});
+					head_script_loads.set(src, load);
+					promises.push(load);
+					document.head.appendChild(script);
+				} else {
+					if (
+						Array.from(document.scripts).some(
+							(s) => !s.src && s.textContent === parsed_script.textContent
+						)
+					) {
+						continue;
+					}
+					const script = document.createElement("script");
+					script.textContent = parsed_script.textContent;
+					document.head.appendChild(script);
+				}
+			} else {
+				// selector-free dedupe, same reason as the script[src] check above.
+				const href = el.tagName === "LINK" ? (el as HTMLLinkElement).href : "";
+				const existing = href
+					? Array.from(document.querySelectorAll("link")).some(
+							(l) => (l as HTMLLinkElement).href === href
+						)
+					: false;
+				if (!existing) {
+					document.head.appendChild(el.cloneNode(true));
+				}
+			}
+		}
+		await Promise.all(promises);
+	}
+
+	// Mount effect
+	$effect(() => {
+		if (!element || mounted) return;
+		mounted = true;
+
+		reactiveProps = new Proxy($state.snapshot(props), {
+			set(target, property, value) {
+				const oldValue = target[property as string];
+				target[property as string] = value;
+
+				if (oldValue !== value) {
+					scheduleRender();
+
+					if (
+						property === "value" ||
+						property === "label" ||
+						property === "visible"
+					) {
+						props[property] = value;
+						old_props[property] = value;
+						onupdate_value?.({ data: value, property });
+					}
+				}
+				return true;
+			}
+		});
+
+		if (has_children) {
+			currentPreHtml = render_template(
+				pre_html_template,
+				reactiveProps,
+				"html"
+			);
+			pre_element.innerHTML = currentPreHtml;
+			currentPostHtml = render_template(
+				post_html_template,
+				reactiveProps,
+				"html"
+			);
+			post_element.innerHTML = currentPostHtml;
+		} else {
+			currentHtml = render_template(html_template, reactiveProps, "html");
+			element.innerHTML = currentHtml;
+		}
+		update_css();
+
+		if (autoscroll) {
+			scroll_to_bottom();
+		}
+		scroll_on_html_update();
+
+		(async () => {
+			if (head) {
+				await loadHead(head);
+			}
+			if (js_on_load && element) {
+				try {
+					const upload_func =
+						upload ??
+						(async (_file: File): Promise<{ path: string; url: string }> => {
+							throw new Error("upload is not available in this context");
+						});
+					const func = new Function(
+						"element",
+						"trigger",
+						"props",
+						"server",
+						"upload",
+						"watch",
+						js_on_load
+					);
+					func(element, trigger, reactiveProps, server, upload_func, watch);
+				} catch (error) {
+					console.error("Error executing js_on_load:", error);
+				}
+			}
+		})();
+	});
+
+	$effect(() => {
+		if (
+			reactiveProps &&
+			props &&
+			JSON.stringify(old_props) !== JSON.stringify(props)
+		) {
+			const changedKeys: string[] = [];
+			for (const key in props) {
+				if (JSON.stringify(reactiveProps[key]) !== JSON.stringify(props[key])) {
+					changedKeys.push(key);
+				}
+				reactiveProps[key] = $state.snapshot(props[key]);
+			}
+			old_props = props;
+			if (changedKeys.length > 0) {
+				queueMicrotask(() => fire_watchers(changedKeys));
+			}
+		}
+	});
+</script>
+
+{#if html_error_message || css_error_message}
+	<div class="error-container">
+		<strong class="error-title"
+			>Error rendering <code class="error-component-name"
+				>{component_class_name}</code
+			>:</strong
+		>
+		<code class="error-message">{html_error_message || css_error_message}</code>
+	</div>
+{:else}
+	<div
+		bind:this={element}
+		id={random_id}
+		class="{apply_default_css && !has_children
+			? 'prose gradio-style'
+			: ''} {elem_classes.join(' ')}"
+		class:hide={!visible}
+		class:has_children
+	>
+		{#if has_children}
+			<div
+				class={apply_default_css ? "prose gradio-style" : ""}
+				bind:this={pre_element}
+			></div>
+			{@render children?.()}
+			<div
+				class={apply_default_css ? "prose gradio-style" : ""}
+				bind:this={post_element}
+			></div>
+		{/if}
+	</div>
+{/if}
 
 <style>
-	.min {
-		min-height: var(--size-24);
-	}
 	.hide {
 		display: none;
+	}
+
+	.has_children {
+		display: flex;
+		flex-direction: column;
+		gap: var(--layout-gap);
+	}
+
+	.error-container {
+		padding: 12px;
+		background-color: #fee;
+		border: 1px solid #fcc;
+		border-radius: 4px;
+		color: #c33;
+		font-family: monospace;
+		font-size: 13px;
+	}
+
+	.error-title {
+		display: block;
+		margin-bottom: 8px;
+	}
+
+	.error-component-name {
+		background-color: #fdd;
+		padding: 2px 4px;
+		border-radius: 2px;
+	}
+
+	.error-message {
+		white-space: pre-wrap;
+		word-break: break-word;
 	}
 </style>

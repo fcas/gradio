@@ -1,0 +1,133 @@
+# API Page
+
+You can use almost any Gradio app programmatically via the built-in API! In the footer of any Gradio app, you'll see a "Use via API" link. Clicking on the link opens up a detailed documentation page for the API that Gradio generates based on the function signatures in your Gradio app.
+
+![](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/gradio-guides/view-api-animated.gif)
+
+## Configuring the API Page
+
+**API endpoint names**
+
+When you create a Gradio application, the API endpoint names are automatically generated based on the function names. You can change this by using the `api_name` parameter in `gr.Interface` or `gr.ChatInterface`. If you are using Gradio `Blocks`, you can name each event listener, like this:
+
+```python
+btn.click(add, [num1, num2], output, api_name="addition")
+```
+
+**Controlling API endpoint visibility**
+
+When building a complex Gradio app, you might want to control how API endpoints appear or behave. Use the `api_visibility` parameter in any `Blocks` event listener to control this:
+
+- `"public"` (default): The endpoint is shown in API docs and accessible to all
+- `"undocumented"`: The endpoint is hidden from API docs but still accessible to downstream apps
+- `"private"`: The endpoint is hidden from API docs and not callable by the Gradio client libraries (e.g. `gradio_client` or `@gradio/client`). Note: this does **not** block direct HTTP requests to the endpoint — it should not be relied upon as a security measure.
+
+To hide an API endpoint from the documentation while still allowing programmatic access:
+
+```python
+btn.click(add, [num1, num2], output, api_visibility="undocumented")
+```
+
+**Hiding endpoints from client libraries**
+
+If you want to hide an API endpoint from the API docs and prevent it from being called by the Gradio client libraries, set `api_visibility="private"`:
+
+```python
+btn.click(add, [num1, num2], output, api_visibility="private")
+```
+
+Note: setting `api_visibility="private"` also means that downstream apps will not be able to load your Gradio app using `gr.load()` as this function uses the Gradio API under the hood. However, the underlying HTTP endpoint is still accessible — this setting should not be relied upon for security.
+
+**Adding API endpoints**
+
+You can also add new API routes to your Gradio application that do not correspond to events in your UI.
+
+For example, in this Gradio application, we add a new route that adds numbers and slices a list:
+
+```py
+import gradio as gr
+with gr.Blocks() as demo:
+    with gr.Row():
+        input = gr.Textbox()
+        button = gr.Button("Submit")
+    output = gr.Textbox()
+    def fn(a: int, b: int, c: list[str]) -> tuple[int, str]:
+        return a + b, c[a:b]
+    gr.api(fn, api_name="add_and_slice")
+
+_, url, _ = demo.launch()
+```
+
+This will create a new route `/add_and_slice` which will show up in the "view API" page. It can be programmatically called by the Python or JS Clients (discussed below) like this:
+
+```py
+from gradio_client import Client
+
+client = Client(url)
+result = client.predict(
+        a=3,
+        b=5,
+        c=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+        api_name="/add_and_slice"
+)
+print(result)
+```
+
+## The Clients
+
+This API page not only lists all of the endpoints that can be used to query the Gradio app, but also shows the usage of both [the Gradio Python client](https://gradio.app/guides/getting-started-with-the-python-client/), and [the Gradio JavaScript client](https://gradio.app/guides/getting-started-with-the-js-client/). 
+
+For each endpoint, Gradio automatically generates a complete code snippet with the parameters and their types, as well as example inputs, allowing you to immediately test an endpoint. Here's an example showing an image file input and `str` output:
+
+![](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/gradio-guides/view-api-snippet.png)
+
+
+## The API Recorder 🪄
+
+Instead of reading through the view API page, you can also use Gradio's built-in API recorder to generate the relevant code snippet. Simply click on the "API Recorder" button, use your Gradio app via the UI as you would normally, and then the API Recorder will generate the code using the Clients to recreate your all of your interactions programmatically.
+
+![](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/gradio-guides/api-recorder.gif)
+
+## Run History
+
+Next to the "Use via API" link, the footer has a **Runs** link, which opens a page at `<your-gradio-app-url>/gradio_api/runs` listing the runs made from this browser, grouped by endpoint. Each run shows its inputs, its outputs, how long the function took, and whether it succeeded. Clicking **Load run** puts a saved run's values back onto the page without calling the function again, which is a quick way to get back to an input you liked or to compare two results side by side.
+
+The run history covers the same endpoints as this API page. An event listener with `api_visibility="undocumented"` or `"private"` is not recorded, and neither is anything Gradio wires up on your behalf, such as loading an example.
+
+Runs are saved in the browser's local storage and are never sent to the server, so each visitor only ever sees their own, and nothing is stored alongside your app. If your app uses `auth`, the history is scoped to the logged-in user as well, so signing in as someone else on a shared browser will not surface the previous user's runs. The most recent 100 runs are kept per running app, and starting your app again begins a fresh history. Values held in `gr.State` live on the server, so they are neither shown nor restored.
+
+The link appears once the browser has saved its first run. To hide the link but keep recording, list the footer links you do want:
+
+```py
+demo.launch(footer_links=["api", "gradio", "settings"])
+```
+
+To turn the feature off completely, set `run_history=False`. Nothing is recorded, the run history page returns a 404, and any runs this app had already saved are cleared from the browser the next time someone opens it:
+
+```py
+demo.launch(run_history=False)
+```
+
+This can also be set with the `GRADIO_RUN_HISTORY` environment variable, which is handy for a Space whose code you would rather not edit.
+
+### Runs made through the clients
+
+Calls made with the JavaScript client are recorded in the same way whenever that client runs in a browser, which is how a `gr.Server` app builds up a run history despite having no UI of its own. Pass `record_history: false` to opt a single client out:
+
+```js
+const app = await Client.connect("abidlabs/my-app", { record_history: false });
+```
+
+Nothing is recorded when the JavaScript client runs in Node, since there is no local storage to write to, and the Python client does not record runs at all. `run_history=False` on the app takes precedence over either client.
+
+## MCP Server
+
+The API page also includes instructions on how to use the Gradio app as an Model Context Protocol (MCP) server, which is a standardized way to expose functions as tools so that they can be used by LLMs. 
+
+![](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/gradio-guides/view-api-mcp.png)
+
+For the MCP sever, each tool, its description, and its parameters are listed, along with instructions on how to integrate with popular MCP Clients. Read more about Gradio's [MCP integration here](https://www.gradio.app/guides/building-mcp-server-with-gradio).
+
+## OpenAPI Specification
+
+You can access the complete OpenAPI (formerly Swagger) specification of your Gradio app's API at the endpoint `<your-gradio-app-url>/gradio_api/openapi.json`. The OpenAPI specification is a standardized, language-agnostic interface description for REST APIs that enables both humans and computers to discover and understand the capabilities of your service.

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import warnings
 from collections import defaultdict
+from collections.abc import Callable
 from functools import lru_cache
-from typing import Callable
 
 classes_to_document = defaultdict(list)
 classes_inherit_documentation = {}
@@ -44,10 +45,12 @@ def extract_instance_attr_doc(cls, attr):
 
 _module_prefixes = [
     ("gradio._simple_templates", "component"),
+    ("gradio.server", "block"),
     ("gradio.block", "block"),
     ("gradio.chat", "chatinterface"),
     ("gradio.component", "component"),
     ("gradio.events", "helpers"),
+    ("gradio.data_classes", "helpers"),
     ("gradio.exceptions", "helpers"),
     ("gradio.external", "helpers"),
     ("gradio.flag", "flagging"),
@@ -58,6 +61,9 @@ _module_prefixes = [
     ("gradio.theme", "themes"),
     ("gradio_client.", "py-client"),
     ("gradio.utils", "helpers"),
+    ("gradio.renderable", "renderable"),
+    ("gradio.validators", "validators"),
+    ("gradio.caching", "helpers"),
 ]
 
 
@@ -123,18 +129,23 @@ def document_fn(fn: Callable, cls) -> tuple[str, list[dict], dict, str | None]:
     signature = inspect.signature(fn)
     description, parameters, returns, examples = [], {}, [], []
     mode = "description"
+    current_parameter = None
+    base_indent = None
     for line in doc_lines:
         line = line.rstrip()
         if line == "Parameters:":
             mode = "parameter"
+            base_indent = None
         elif line.startswith("Example:"):
             mode = "example"
+            base_indent = None
             if "(" in line and ")" in line:
                 c = line.split("(")[1].split(")")[0]
                 if c != cls.__name__:
                     mode = "ignore"
         elif line == "Returns:":
             mode = "return"
+            base_indent = None
         else:
             if mode == "description":
                 description.append(line if line.strip() else "<br>")
@@ -147,14 +158,22 @@ def document_fn(fn: Callable, cls) -> tuple[str, list[dict], dict, str | None]:
                 )
             line = line[4:]
             if mode == "parameter":
-                colon_index = line.index(": ")
-                if colon_index < -1:
-                    raise SyntaxError(
-                        f"Documentation format for {fn.__name__} has format error in line: {line}"
-                    )
-                parameter = line[:colon_index]
-                parameter_doc = line[colon_index + 2 :]
-                parameters[parameter] = parameter_doc
+                if ": " in line and not line.startswith(" "):
+                    colon_index = line.index(": ")
+                    if colon_index < -1:
+                        raise SyntaxError(
+                            f"Documentation format for {fn.__name__} has format error in line: {line}"
+                        )
+                    current_parameter = line[:colon_index]
+                    parameter_doc = line[colon_index + 2 :]
+                    parameters[current_parameter] = parameter_doc
+                    base_indent = None
+                elif current_parameter and line.strip():
+                    if base_indent is None:
+                        base_indent = len(line) - len(line.lstrip())
+                    if base_indent > 0 and line.startswith(" " * base_indent):
+                        line = line[base_indent:]
+                    parameters[current_parameter] += "\n" + line
             elif mode == "return":
                 returns.append(line)
             elif mode == "example":
@@ -196,11 +215,12 @@ def document_fn(fn: Callable, cls) -> tuple[str, list[dict], dict, str | None]:
         )
     if len(returns) == 0:
         return_docs = {}
-    elif len(returns) == 1:
-        return_docs = {"annotation": signature.return_annotation, "doc": returns[0]}
     else:
-        return_docs = {}
-        # raise ValueError("Does not support multiple returns yet.")
+        return_doc_text = "\n".join(returns)
+        return_docs = {
+            "annotation": signature.return_annotation,
+            "doc": return_doc_text,
+        }
     examples_doc = "\n".join(examples) if len(examples) > 0 else None
     return description_doc, parameter_docs, return_docs, examples_doc
 
@@ -246,7 +266,11 @@ def generate_documentation():
     for mode, class_list in classes_to_document.items():
         documentation[mode] = []
         for cls, fns in class_list:
-            fn_to_document = cls if inspect.isfunction(cls) else cls.__init__
+            fn_to_document = (
+                cls
+                if inspect.isfunction(cls) or dataclasses.is_dataclass(cls)
+                else cls.__init__
+            )
             _, parameter_doc, return_doc, _ = document_fn(fn_to_document, cls)
             if (
                 hasattr(cls, "preprocess")
@@ -329,13 +353,13 @@ def generate_documentation():
                 classes_inherit_documentation[cls] = cls_documentation["fns"]
     for mode, class_list in classes_to_document.items():
         for i, (cls, _) in enumerate(class_list):
-            for super_class in classes_inherit_documentation:
+            for super_class, fns in classes_inherit_documentation.items():
                 if (
                     inspect.isclass(cls)
                     and issubclass(cls, super_class)
                     and cls != super_class
                 ):
-                    for inherited_fn in classes_inherit_documentation[super_class]:
+                    for inherited_fn in fns:
                         inherited_fn = dict(inherited_fn)
                         try:
                             inherited_fn["description"] = extract_instance_attr_doc(

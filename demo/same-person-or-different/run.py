@@ -1,6 +1,7 @@
+# type: ignore
 import gradio as gr
 import torch
-from torchaudio.sox_effects import apply_effects_file
+from torchaudio.sox_effects import apply_effects_file  # type: ignore
 from transformers import AutoFeatureExtractor, AutoModelForAudioXVector
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -43,7 +44,6 @@ feature_extractor = AutoFeatureExtractor.from_pretrained(model_name)
 model = AutoModelForAudioXVector.from_pretrained(model_name).to(device)
 cosine_sim = torch.nn.CosineSimilarity(dim=-1)
 
-
 def similarity_fn(path1, path2):
     if not (path1 and path2):
         return '<b style="color:red">ERROR: Please record audio for *both* speakers!</b>'
@@ -75,7 +75,6 @@ inputs = [
 ]
 output = gr.HTML(label="")
 
-
 description = (
     "This demo from Microsoft will compare two speech samples and determine if they are from the same speaker. "
     "Try it with your own voice!"
@@ -97,7 +96,7 @@ interface = gr.Interface(
     inputs=inputs,
     outputs=output,
     layout="horizontal",
-    allow_flagging=False,
+    flagging_mode="never",
     live=False,
     examples=examples,
     cache_examples=False

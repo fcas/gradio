@@ -1,9 +1,7 @@
 import gradio as gr
 
-
 def sentence_builder(quantity, animal, countries, place, activity_list, morning):
     return f"""The {quantity} {animal}s from {" and ".join(countries)} went to the {place} where they {" and ".join(activity_list)} until the {"morning" if morning else "night"}"""
-
 
 demo = gr.Interface(
     sentence_builder,
@@ -20,6 +18,7 @@ demo = gr.Interface(
         gr.Checkbox(label="Morning", info="Did they do it in the morning?"),
     ],
     "text",
+    api_name="predict",
     examples=[
         [2, "cat", ["Japan", "Pakistan"], "park", ["ate", "swam"], True],
         [4, "dog", ["Japan"], "zoo", ["ate", "swam"], False],

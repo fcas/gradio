@@ -4,39 +4,81 @@ from pathlib import Path
 
 import pytest
 
-from gradio.cli.commands.components._create_utils import OVERRIDES
 from gradio.cli.commands.components.build import _build
-from gradio.cli.commands.components.create import _create
-from gradio.cli.commands.components.install_component import _get_executable_path
+from gradio.cli.commands.components.create import _create, _create_utils
+from gradio.cli.commands.components.install_component import (
+    _get_executable_path,
+    _get_frontend_dir,
+)
 from gradio.cli.commands.components.publish import _get_version_from_file
 from gradio.cli.commands.components.show import _show
+from gradio.utils import core_gradio_components
+
+core = [
+    c.__name__
+    for c in core_gradio_components()
+    if not getattr(c, "is_template", False)
+    and c.__name__ not in ["Tab", "Form", "FormComponent", "BrowserState", "Navbar"]
+]
 
 
+def test_component_root_downloads_missing_version_to_snapshot_cache(
+    tmp_path, monkeypatch
+):
+    package_dir = tmp_path / "package"
+    (package_dir / "_frontend_code").mkdir(parents=True)
+    snapshot_dir = tmp_path / "snapshot"
+    expected_root = snapshot_dir / "test-version"
+    (expected_root / "image").mkdir(parents=True)
+    download_count = 0
+
+    def download():
+        nonlocal download_count
+        download_count += 1
+        return snapshot_dir
+
+    monkeypatch.setattr(
+        _create_utils.inspect, "getfile", lambda _module: package_dir / "__init__.py"
+    )
+    monkeypatch.setattr(_create_utils.gradio, "__version__", "test-version")
+    monkeypatch.setattr(_create_utils, "_download_from_hub", download)
+
+    component = _create_utils._get_component_code("Image")
+    assert _create_utils._get_component_root(component) == expected_root
+    assert download_count == 1
+
+
+def test_component_root_uses_complete_local_component(tmp_path, monkeypatch):
+    package_dir = tmp_path / "package"
+    expected_root = package_dir / "_frontend_code" / "test-version"
+    (expected_root / "image").mkdir(parents=True)
+
+    monkeypatch.setattr(
+        _create_utils.inspect, "getfile", lambda _module: package_dir / "__init__.py"
+    )
+    monkeypatch.setattr(_create_utils.gradio, "__version__", "test-version")
+    monkeypatch.setattr(
+        _create_utils,
+        "_download_from_hub",
+        lambda: pytest.fail("complete local component should not be downloaded"),
+    )
+
+    component = _create_utils._get_component_code("Image")
+    assert _create_utils._get_component_root(component) == expected_root
+
+
+@pytest.mark.serial
+@pytest.mark.flaky
 @pytest.mark.parametrize(
     "template",
-    [
-        "Row",
-        "Column",
-        "Tabs",
-        "Group",
-        "Accordion",
-        "AnnotatedImage",
-        "HighlightedText",
-        "BarPlot",
-        "ClearButton",
-        "ColorPicker",
-        "DuplicateButton",
-        "LinePlot",
-        "LogoutButton",
-        "LoginButton",
-        "ScatterPlot",
-        "UploadButton",
-        "JSON",
-        "FileExplorer",
-        "Model3D",
-    ],
+    core,
 )
 def test_template_override_component(template, tmp_path):
+    """When you add a new component this test will likely fail locally
+    because the js files have not been moved to the _frontend_code directory.
+
+    Just build the python package (python -m build -w) to move the latest state of the js directory to _frontend_code.
+    """
     _create(
         "MyComponent",
         tmp_path,
@@ -46,12 +88,13 @@ def test_template_override_component(template, tmp_path):
         configure_metadata=False,
     )
     app = (tmp_path / "demo" / "app.py").read_text()
+    component_files = _create_utils._get_component_code(template)
     answer = textwrap.dedent(
         f"""
 import gradio as gr
 from gradio_mycomponent import MyComponent
 
-{OVERRIDES[template].demo_code.format(name="MyComponent")}
+{component_files.demo_code.format(name="MyComponent")}
 
 if __name__ == "__main__":
     demo.launch()
@@ -88,6 +131,39 @@ def test_get_executable_path():
         _get_executable_path("foo", "/foo/bar/fum", "--foo-path")
 
 
+def test_get_frontend_dir_defaults_to_frontend_folder(tmp_path):
+    assert _get_frontend_dir(tmp_path) == tmp_path / "frontend"
+
+
+def test_get_frontend_dir_respects_frontend_dir_override(tmp_path, monkeypatch):
+    package_name = "gradio_frontenddirtest"
+    package_dir = tmp_path / package_name
+    package_dir.mkdir()
+    (package_dir / "__init__.py").write_text(
+        textwrap.dedent(
+            """
+            from gradio.components import Textbox
+
+            class APlainComponent(Textbox):
+                pass
+
+            class ZCustomComponent(Textbox):
+                FRONTEND_DIR = "../frontend/custom"
+            """
+        )
+    )
+    (tmp_path / "pyproject.toml").write_text(
+        textwrap.dedent(
+            f"""
+            [project]
+            name = "{package_name}"
+            """
+        )
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    assert _get_frontend_dir(tmp_path) == (tmp_path / "frontend" / "custom").resolve()
+
+
 def test_raise_error_component_template_does_not_exist(tmp_path):
     with pytest.raises(
         ValueError,
@@ -103,6 +179,7 @@ def test_raise_error_component_template_does_not_exist(tmp_path):
         )
 
 
+@pytest.mark.flaky
 def test_do_not_replace_class_name_in_import_statement(tmp_path):
     _create(
         "MyImage",
@@ -176,6 +253,7 @@ def test_build(template, virtualenv):
         shutil.rmtree(str(dir_), ignore_errors=True)
 
 
+@pytest.mark.flaky
 def test_build_fails_if_component_not_installed(tmp_path):
     _create(
         "MyComponent",
@@ -192,6 +270,7 @@ def test_build_fails_if_component_not_installed(tmp_path):
         _build(tmp_path)
 
 
+@pytest.mark.flaky
 def test_fallback_template_app(tmp_path):
     _create(
         "SimpleComponent2",

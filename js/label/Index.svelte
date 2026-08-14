@@ -1,72 +1,64 @@
-<script context="module" lang="ts">
+<script module lang="ts">
 	export { default as BaseLabel } from "./shared/Label.svelte";
 </script>
 
 <script lang="ts">
-	import type { Gradio, SelectData } from "@gradio/utils";
+	import type { LabelProps, LabelEvents } from "./types";
+	import { Gradio } from "@gradio/utils";
 	import Label from "./shared/Label.svelte";
 	import { LineChart as LabelIcon } from "@gradio/icons";
-	import { Block, BlockLabel, Empty } from "@gradio/atoms";
+	import { Block, BlockLabel, Empty, IconButtonWrapper } from "@gradio/atoms";
 	import { StatusTracker } from "@gradio/statustracker";
-	import type { LoadingStatus } from "@gradio/statustracker";
+	import type { SelectData } from "@gradio/utils";
 
-	export let gradio: Gradio<{
-		change: never;
-		select: SelectData;
-		clear_status: LoadingStatus;
-	}>;
-	export let elem_id = "";
-	export let elem_classes: string[] = [];
-	export let visible = true;
-	export let color: undefined | string = undefined;
-	export let value: {
-		label?: string;
-		confidences?: { label: string; confidence: number }[];
-	} = {};
-	let old_value: typeof value | null = null;
-	export let label = gradio.i18n("label.label");
-	export let container = true;
-	export let scale: number | null = null;
-	export let min_width: number | undefined = undefined;
-	export let loading_status: LoadingStatus;
-	export let show_label = true;
-	export let _selectable = false;
+	const props = $props();
+	const gradio = new Gradio<LabelEvents, LabelProps>(props);
 
-	$: {
-		if (JSON.stringify(value) !== JSON.stringify(old_value)) {
-			old_value = value;
-			gradio.dispatch("change");
-		}
-	}
+	let _label = $derived(gradio.props.value.label);
 
-	$: _label = value.label;
+	gradio.watch_for_change();
 </script>
 
 <Block
 	test_id="label"
-	{visible}
-	{elem_id}
-	{elem_classes}
-	{container}
-	{scale}
-	{min_width}
+	visible={gradio.shared.visible}
+	elem_id={gradio.shared.elem_id}
+	elem_classes={gradio.shared.elem_classes}
+	container={gradio.shared.container}
+	scale={gradio.shared.scale}
+	min_width={gradio.shared.min_width}
 	padding={false}
 >
 	<StatusTracker
-		autoscroll={gradio.autoscroll}
+		autoscroll={gradio.shared.autoscroll}
 		i18n={gradio.i18n}
-		{...loading_status}
-		on:clear_status={() => gradio.dispatch("clear_status", loading_status)}
+		{...gradio.shared.loading_status}
+		on_clear_status={() =>
+			gradio.dispatch("clear_status", gradio.shared.loading_status)}
 	/>
-	{#if show_label}
-		<BlockLabel Icon={LabelIcon} {label} disable={container === false} />
+	{#if gradio.shared.show_label && gradio.props.buttons && gradio.props.buttons.length > 0}
+		<IconButtonWrapper
+			buttons={gradio.props.buttons}
+			on_custom_button_click={(id) => {
+				gradio.dispatch("custom_button_click", { id });
+			}}
+		/>
+	{/if}
+	{#if gradio.shared.show_label}
+		<BlockLabel
+			Icon={LabelIcon}
+			label={gradio.shared.label || gradio.i18n("label.label")}
+			disable={gradio.shared.container === false}
+			float={gradio.props.show_heading === true}
+		/>
 	{/if}
 	{#if _label !== undefined && _label !== null}
 		<Label
-			on:select={({ detail }) => gradio.dispatch("select", detail)}
-			selectable={_selectable}
-			{value}
-			{color}
+			onselect={(detail: SelectData) => gradio.dispatch("select", detail)}
+			selectable={gradio.props._selectable}
+			value={gradio.props.value}
+			color={gradio.props.color}
+			show_heading={gradio.props.show_heading}
 		/>
 	{:else}
 		<Empty unpadded_box={true}><LabelIcon /></Empty>

@@ -2,22 +2,26 @@
 .eggs/
 gradio.egg-info
 dist/
-dist-lite/
 *.pyc
 __pycache__/
 *.py[cod]
 *$py.class
 build/
+!js/build/
+!js/build/dist/
 __tmp/*
 *.pyi
-py.typed
+!gradio/stubs/**/*.pyi
 .ipynb_checkpoints/
+.python-version
+=23.2
 
 # JS build
 gradio/templates/*
 gradio/node/*
 gradio/_frontend_code/*
 js/gradio-preview/test/*
+**/dist/**/*.d.ts
 
 # Secrets
 .env
@@ -26,8 +30,9 @@ js/gradio-preview/test/*
 *.db
 *.sqlite3
 gradio/launches.json
-flagged/
-gradio_cached_examples/
+gradio/hash_seed.txt
+.gradio/
+
 tmp.zip
 
 # Tests
@@ -36,6 +41,7 @@ coverage.xml
 test.txt
 **/snapshots/**/*.png
 playwright-report/
+.hypothesis
 
 # Demos
 demo/tmp.zip
@@ -48,6 +54,11 @@ demo/annotatedimage_component/*.png
 demo/fake_diffusion_with_gif/*.gif
 demo/cancel_events/cancel_events_output_log.txt
 demo/unload_event_test/output_log.txt
+demo/stream_video_out/output_*.ts
+demo/stream_video_out/output_*.mp4
+demo/stream_audio_out/*.mp3
+test-demo/*
+#demo/image_editor_story/*.png
 
 # Etc
 .idea/*
@@ -76,11 +87,24 @@ test-results
 client/js/dist/*
 client/js/test.js
 .config/test.py
+.svelte-kit
+.vitest-attachments
 
 # storybook
 storybook-static
 build-storybook.log
 js/storybook/theme.css
+*storybook.log
 
 # playwright
 .config/playwright/.cache
+
+*.local.*
+.claude/settings.local
+CLAUDE.md
+.sonda/
+
+# docs upload
+scripts/docs.json
+tmp_input
+.claude/scheduled_tasks.lock

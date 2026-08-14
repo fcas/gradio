@@ -1,5 +1,462 @@
 # @gradio/row
 
+## 0.4.0
+
+### Dependency updates
+
+- @gradio/utils@0.14.0
+- @gradio/statustracker@0.15.2
+
+## 0.4.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.15.1
+
+## 0.4.0
+
+### Features
+
+- [#13526](https://github.com/gradio-app/gradio/pull/13526) [`53cb4ca`](https://github.com/gradio-app/gradio/commit/53cb4cae1ec3521e9170d12867253516413ba37a) - Run `pnpm lint` and `pnpm ts:check` on CI.  Thanks @abidlabs!
+
+### Dependency updates
+
+- @gradio/statustracker@0.15.0
+- @gradio/utils@0.13.0
+
+## 0.3.2
+
+### Dependency updates
+
+- @gradio/statustracker@0.14.1
+
+## 0.3.2
+
+### Features
+
+- [#13231](https://github.com/gradio-app/gradio/pull/13231) [`89f7a09`](https://github.com/gradio-app/gradio/commit/89f7a096ceb947c97ac5dce9f8b8d62e1361ad7b) - Layout tests.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/statustracker@0.14.0
+
+## 0.3.1
+
+### Dependency updates
+
+- @gradio/utils@0.12.2
+- @gradio/statustracker@0.13.1
+
+## 0.3.1
+
+### Dependency updates
+
+- @gradio/utils@0.12.1
+- @gradio/statustracker@0.13.0
+
+## 0.3.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.12.5
+- @gradio/utils@0.12.0
+
+## 0.3.1
+
+### Dependency updates
+
+- @gradio/utils@0.11.3
+- @gradio/statustracker@0.12.4
+
+## 0.3.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.12.3
+
+## 0.3.1
+
+### Fixes
+
+- [#12800](https://github.com/gradio-app/gradio/pull/12800) [`7a1c321`](https://github.com/gradio-app/gradio/commit/7a1c321b6546ba05a353488f5133e8262c4a8a39) - Bump svelte/kit for security reasons.  Thanks @freddyaboulton!
+
+### Dependency updates
+
+- @gradio/statustracker@0.12.2
+- @gradio/utils@0.11.2
+
+## 0.3.0
+
+### Dependency updates
+
+- @gradio/utils@0.11.1
+
+## 0.3.0
+
+### Dependency updates
+
+- @gradio/utils@0.11.0
+- @gradio/statustracker@0.12.1
+
+## 0.3.0
+
+### Dependency updates
+
+- @gradio/utils@0.10.4
+
+## 0.3.0
+
+### Features
+
+- [#12438](https://github.com/gradio-app/gradio/pull/12438) [`25ffc03`](https://github.com/gradio-app/gradio/commit/25ffc0398f8feb43d817c02b2ab970c16de6d797) - Svelte5 migration and bugfix
+
+## 0.2.2
+
+### Dependency updates
+
+- @gradio/statustracker@0.12.0-dev.1
+
+## 0.2.2
+
+### Dependency updates
+
+- @gradio/utils@0.10.3-dev.0
+- @gradio/statustracker@0.12.0-dev.0
+
+## 0.2.2
+
+### Fixes
+
+- [#11784](https://github.com/gradio-app/gradio/pull/11784) [`d9dd3f5`](https://github.com/gradio-app/gradio/commit/d9dd3f54b7fb34cf7118e549d39fc63937ca3489) - Add "hidden" option to component's `visible` kwarg to render but visually hide the component.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/statustracker@0.11.1
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.11.0
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.18
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.17
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.16
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.15
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.14
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.13
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.12
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.12
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.12
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.11
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.10
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.9
+- @gradio/utils@0.10.2
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.8
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.7
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.6
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.5
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.4
+
+## 0.2.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.3
+- @gradio/utils@0.10.1
+
+## 0.2.1
+
+### Fixes
+
+- [#10372](https://github.com/gradio-app/gradio/pull/10372) [`96bbde2`](https://github.com/gradio-app/gradio/commit/96bbde277e059f79bb2c9898576050e84dab147a) - Allow propogation of fill_height through Rows and Tabs, via scale.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.2
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.1
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/utils@0.10.0
+- @gradio/statustracker@0.10.0
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.7
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/utils@0.9.0
+- @gradio/statustracker@0.9.6
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/utils@0.8.0
+- @gradio/statustracker@0.9.5
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.4
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.3
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.2
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.1
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.0
+
+## 0.2.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.1
+
+## 0.2.0
+
+### Features
+
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - Equal height columns
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - UI theme fixes
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - Standardize `height` across components and add `max_height` and `min_height` parameters where appropriate
+
+## 0.2.0-beta.3
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.5
+
+## 0.2.0-beta.3
+
+### Features
+
+- [#9577](https://github.com/gradio-app/gradio/pull/9577) [`9f532e0`](https://github.com/gradio-app/gradio/commit/9f532e03a6b91b9a5592152c19b9b2611774cae7) - Equal height columns.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.4
+
+## 0.2.0-beta.2
+
+### Features
+
+- [#9496](https://github.com/gradio-app/gradio/pull/9496) [`1647ebd`](https://github.com/gradio-app/gradio/commit/1647ebddc3e2ed6fc143a62629409e32afcc5801) - UI theme fixes.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.3
+
+## 0.2.0-beta.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.2
+
+## 0.2.0-beta.1
+
+### Features
+
+- [#9313](https://github.com/gradio-app/gradio/pull/9313) [`1fef9d9`](https://github.com/gradio-app/gradio/commit/1fef9d9a26f0ebce4de18c486702661f6539b1c6) - Standardize `height` across components and add `max_height` and `min_height` parameters where appropriate.  Thanks @abidlabs!
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.2
+- @gradio/utils@0.7.0-beta.2
+
+## 0.1.5-beta.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.1
+- @gradio/utils@0.7.0-beta.1
+
+## 0.1.5
+
+### Fixes
+
+- [#9163](https://github.com/gradio-app/gradio/pull/9163) [`2b6cbf2`](https://github.com/gradio-app/gradio/commit/2b6cbf25908e42cf027324e54ef2cc0baad11a91) - fix exports and generate types.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/utils@0.6.1
+- @gradio/statustracker@0.7.6
+
+## 0.1.4
+
+### Features
+
+- [#9118](https://github.com/gradio-app/gradio/pull/9118) [`e1c404d`](https://github.com/gradio-app/gradio/commit/e1c404da1143fb52b659d03e028bdba1badf443d) - setup npm-previews of all packages.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/utils@0.6.0
+- @gradio/statustracker@0.7.5
+
+## 0.1.3
+
+### Dependency updates
+
+- @gradio/statustracker@0.7.4
+
+## 0.1.3
+
+### Dependency updates
+
+- @gradio/utils@0.5.2
+- @gradio/statustracker@0.7.3
+
+## 0.1.3
+
+### Dependency updates
+
+- @gradio/statustracker@0.7.2
+
+## 0.1.3
+
+### Dependency updates
+
+- @gradio/utils@0.5.1
+- @gradio/statustracker@0.7.1
+
+## 0.1.3
+
+### Dependency updates
+
+- @gradio/utils@0.5.0
+- @gradio/statustracker@0.7.0
+
+## 0.1.3
+
+### Dependency updates
+
+- @gradio/statustracker@0.6.0
+
+## 0.1.3
+
+### Features
+
+- [#8398](https://github.com/gradio-app/gradio/pull/8398) [`945ac83`](https://github.com/gradio-app/gradio/commit/945ac837e779b120790814ea6f6f81bd2712f5f8) - Improve rendering.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/statustracker@0.6.0
+
 ## 0.1.2
 
 ### Fixes

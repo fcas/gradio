@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Any, Callable
+from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING, Any, Literal
 
 from gradio_client.documentation import document
 
-from gradio.components.base import FormComponent
+from gradio.components.base import Component, FormComponent
+from gradio.components.number import Number
 from gradio.events import Events
+from gradio.i18n import I18nData
+from gradio.utils import parse_escaped_json
+
+if TYPE_CHECKING:
+    from gradio.components import Timer
 
 
 @document()
@@ -18,7 +25,6 @@ class Slider(FormComponent):
     Creates a slider that ranges from {minimum} to {maximum} with a step size of {step}.
 
     Demos: sentence_builder, slider_release, interface_random_slider, blocks_random_slider
-    Guides: create-your-own-friends-with-a-gan
     """
 
     EVENTS = [Events.change, Events.input, Events.release]
@@ -30,56 +36,70 @@ class Slider(FormComponent):
         value: float | Callable | None = None,
         *,
         step: float | None = None,
-        label: str | None = None,
-        info: str | None = None,
-        every: float | None = None,
+        precision: int | None = None,
+        label: str | I18nData | None = None,
+        info: str | I18nData | None = None,
+        every: Timer | float | None = None,
+        inputs: Component | Sequence[Component] | set[Component] | None = None,
         show_label: bool | None = None,
         container: bool = True,
         scale: int | None = None,
         min_width: int = 160,
         interactive: bool | None = None,
-        visible: bool = True,
+        visible: bool | Literal["hidden"] = True,
         elem_id: str | None = None,
         elem_classes: list[str] | str | None = None,
         render: bool = True,
-        key: int | str | None = None,
+        key: int | str | tuple[int | str, ...] | None = None,
+        preserved_by_key: list[str] | str | None = "value",
         randomize: bool = False,
+        buttons: list[Literal["reset"]] | None = None,
     ):
         """
         Parameters:
-            minimum: minimum value for slider.
-            maximum: maximum value for slider.
-            value: default value. If callable, the function will be called whenever the app loads to set the initial value of the component. Ignored if randomized=True.
+            minimum: minimum value for slider. When used as an input, if a user provides a smaller value, a gr.Error exception is raised by the backend.
+            maximum: maximum value for slider. When used as an input, if a user provides a larger value, a gr.Error exception is raised by the backend.
+            value: default value for slider. If a function is provided, the function will be called each time the app loads to set the initial value of this component. Ignored if randomized=True.
             step: increment between slider values.
-            label: The label for this component. Appears above the component and is also used as the header if there are a table of examples for this component. If None and used in a `gr.Interface`, the label will be the name of the parameter this component is assigned to.
-            info: additional component description.
-            every: If `value` is a callable, run the function 'every' number of seconds while the client connection is open. Has no effect otherwise. The event can be accessed (e.g. to cancel it) via this component's .load_event attribute.
+            precision: Precision to round input/output to. If set to 0, will round to nearest integer and convert type to int. If None, no rounding happens.
+            label: the label for this component, displayed above the component if `show_label` is `True` and is also used as the header if there are a table of examples for this component. If None and used in a `gr.Interface`, the label will be the name of the parameter this component corresponds to.
+            info: additional component description, appears below the label in smaller font. Supports markdown / HTML syntax.
+            every: Continuously calls `value` to recalculate it if `value` is a function (has no effect otherwise). Can provide a Timer whose tick resets `value`, or a float that provides the regular interval for the reset Timer.
+            inputs: Components that are used as inputs to calculate `value` if `value` is a function (has no effect otherwise). `value` is recalculated any time the inputs change.
             show_label: if True, will display label.
             container: If True, will place the component in a container - providing some extra padding around the border.
             scale: relative size compared to adjacent Components. For example if Components A and B are in a Row, and A has scale=2, and B has scale=1, A will be twice as wide as B. Should be an integer. scale applies in Rows, and to top-level Components in Blocks where fill_height=True.
             min_width: minimum pixel width, will wrap if not sufficient screen space to satisfy this value. If a certain scale value results in this Component being narrower than min_width, the min_width parameter will be respected first.
             interactive: if True, slider will be adjustable; if False, adjusting will be disabled. If not provided, this is inferred based on whether the component is used as an input or output.
-            visible: If False, component will be hidden.
+            visible: If False, component will be hidden. If "hidden", component will be visually hidden and not take up space in the layout but still exist in the DOM
             elem_id: An optional string that is assigned as the id of this component in the HTML DOM. Can be used for targeting CSS styles.
             elem_classes: An optional list of strings that are assigned as the classes of this component in the HTML DOM. Can be used for targeting CSS styles.
             render: If False, component will not render be rendered in the Blocks context. Should be used if the intention is to assign event listeners now but render the component later.
-            key: if assigned, will be used to assume identity across a re-render. Components that have the same key across a re-render will have their value preserved.
+            key: in a gr.render, Components with the same key across re-renders are treated as the same component, not a new component. Properties set in 'preserved_by_key' are not reset across a re-render.
+            preserved_by_key: A list of parameters from this component's constructor. Inside a gr.render() function, if a component is re-rendered with the same key, these (and only these) parameters will be preserved in the UI (if they have been changed by the user or an event listener) instead of re-rendered based on the values provided during constructor.
             randomize: If True, the value of the slider when the app loads is taken uniformly at random from the range given by the minimum and maximum.
+            buttons: A list of buttons to show for the component. Currently, the only valid option is "reset". The "reset" button allows the user to reset the slider to its default value. By default, no buttons are shown.
         """
+        if minimum >= maximum:
+            raise ValueError("Slider minimum must be less than maximum.")
+
         self.minimum = minimum
         self.maximum = maximum
+        self.precision = precision
         if step is None:
             difference = maximum - minimum
             power = math.floor(math.log10(difference) - 2)
             self.step = 10**power
         else:
             self.step = step
+        self.buttons = buttons
         if randomize:
             value = self.get_random_value
         super().__init__(
             label=label,
             info=info,
             every=every,
+            inputs=inputs,
             show_label=show_label,
             container=container,
             scale=scale,
@@ -90,12 +110,13 @@ class Slider(FormComponent):
             elem_classes=elem_classes,
             render=render,
             key=key,
+            preserved_by_key=preserved_by_key,
             value=value,
         )
 
     def api_info(self) -> dict[str, Any]:
         return {
-            "type": "number",
+            "type": "integer" if self.precision == 0 else "number",
             "description": f"numeric value between {self.minimum} and {self.maximum}",
         }
 
@@ -122,7 +143,9 @@ class Slider(FormComponent):
         Returns:
             The value of the slider within the range.
         """
-        return self.minimum if value is None else value
+        return Number.round_to_precision(
+            self.minimum if value is None else value, self.precision
+        )
 
     def preprocess(self, payload: float) -> float:
         """
@@ -131,4 +154,9 @@ class Slider(FormComponent):
         Returns:
             Passes slider value as a {float} into the function.
         """
-        return payload
+        Number.raise_if_out_of_bounds(payload, self.minimum, self.maximum)
+        return Number.round_to_precision(payload, self.precision)
+
+    def read_from_flag(self, payload: Any):
+        """Sliders are stored as strings in the flagging file, so we need to parse them as json."""
+        return parse_escaped_json(payload)

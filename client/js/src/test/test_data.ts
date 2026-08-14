@@ -46,7 +46,7 @@ export const transformed_api_info: ApiInfo<ApiData> = {
 					component: "Textbox"
 				}
 			],
-			type: { continuous: false, generator: false }
+			type: { generator: false, cancel: false }
 		}
 	},
 	unnamed_endpoints: {
@@ -68,7 +68,7 @@ export const transformed_api_info: ApiInfo<ApiData> = {
 					component: "Textbox"
 				}
 			],
-			type: { continuous: false, generator: false }
+			type: { generator: false, cancel: false }
 		}
 	}
 };
@@ -212,7 +212,7 @@ export const config_response: Config = {
 				visible: true,
 				interactive: true,
 				elem_classes: [],
-				show_api: false,
+				api_visibility: "undocumented",
 				name: "button",
 				_selectable: false
 			},
@@ -306,7 +306,7 @@ export const config_response: Config = {
 	space_id: "hmb/hello_world",
 	enable_queue: true,
 	show_error: false,
-	show_api: true,
+	footer_links: ["api", "gradio", "settings"],
 	is_colab: false,
 	stylesheets: [],
 	theme: "default",
@@ -376,6 +376,7 @@ export const config_response: Config = {
 	},
 	dependencies: [
 		{
+			id: 0,
 			targets: [
 				[9, "click"],
 				[1, "submit"]
@@ -393,17 +394,19 @@ export const config_response: Config = {
 			max_batch_size: 4,
 			cancels: [],
 			types: {
-				continuous: false,
-				generator: false
+				generator: false,
+				cancel: false
 			},
 			collects_event_data: false,
 			trigger_after: null,
 			trigger_only_on_success: false,
+			trigger_only_on_failure: false,
 			trigger_mode: "once",
-			show_api: true,
+			api_visibility: "public",
 			zerogpu: false
 		},
 		{
+			id: 1,
 			targets: [[8, "click"]],
 			inputs: [],
 			outputs: [1, 2],
@@ -418,17 +421,19 @@ export const config_response: Config = {
 			max_batch_size: 4,
 			cancels: [],
 			types: {
-				continuous: false,
-				generator: false
+				generator: false,
+				cancel: false
 			},
 			collects_event_data: false,
 			trigger_after: null,
 			trigger_only_on_success: false,
+			trigger_only_on_failure: false,
 			trigger_mode: "once",
-			show_api: false,
+			api_visibility: "private",
 			zerogpu: false
 		},
 		{
+			id: 2,
 			targets: [[8, "click"]],
 			inputs: [],
 			outputs: [5],
@@ -443,14 +448,15 @@ export const config_response: Config = {
 			max_batch_size: 4,
 			cancels: [],
 			types: {
-				continuous: false,
-				generator: false
+				generator: false,
+				cancel: false
 			},
 			collects_event_data: false,
 			trigger_after: null,
 			trigger_only_on_success: false,
+			trigger_only_on_failure: false,
 			trigger_mode: "once",
-			show_api: false,
+			api_visibility: "private",
 			zerogpu: false
 		}
 	],
@@ -544,7 +550,6 @@ export const endpoint_info: EndpointInfo<ApiData> = {
 		}
 	],
 	type: {
-		continuous: false,
 		generator: false
 	}
 };

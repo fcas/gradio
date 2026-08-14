@@ -1,4 +1,1446 @@
-# @gradio/app
+# @self/app
+
+## 2.3.0
+
+### Dependency updates
+
+- @gradio/client@2.5.0
+
+## 2.3.0
+
+### Features
+
+- [#13601](https://github.com/gradio-app/gradio/pull/13601) [`0ee5cc8`](https://github.com/gradio-app/gradio/commit/0ee5cc80e2915e5a1b074c892490a62f165cd80d) - Preserve browser-visible proxy origins for frontend assets and API requests, and retain app-level FastAPI root paths.  Thanks @abidlabs!
+- [#13329](https://github.com/gradio-app/gradio/pull/13329) [`7ac583a`](https://github.com/gradio-app/gradio/commit/7ac583a38a4c995d172033ff6e3700390201ff21) - Make builds go zoom zoom.  Thanks @pngwn!
+- [#13673](https://github.com/gradio-app/gradio/pull/13673) [`f412c6d`](https://github.com/gradio-app/gradio/commit/f412c6de20072524bf6cf45bce77a8000f9fd4b1) - Bundle postcss in standalone SSR builds.  Thanks @dawoodkhan82!
+
+### Dependency updates
+
+- @gradio/client@2.4.0
+- @gradio/theme@0.7.0
+- @gradio/core@1.10.0
+- @self/build@0.6.2
+
+## 2.2.2
+
+### Dependency updates
+
+- @gradio/client@2.3.1
+- @gradio/core@1.9.0
+
+## 2.2.2
+
+### Dependency updates
+
+- @gradio/client@2.3.0
+- @gradio/theme@0.6.2
+- @gradio/core@1.8.0
+
+## 2.2.2
+
+### Dependency updates
+
+- @gradio/client@2.2.2
+
+## 2.2.2
+
+### Fixes
+
+- [#13450](https://github.com/gradio-app/gradio/pull/13450) [`dba4a16`](https://github.com/gradio-app/gradio/commit/dba4a168ce00c15497fd2b99a3364ebbb4842b72) - preserve head script execution order.  Thanks @hysts!
+
+## 2.2.1
+
+### Fixes
+
+- [#13463](https://github.com/gradio-app/gradio/pull/13463) [`58088ad`](https://github.com/gradio-app/gradio/commit/58088ad1d75eee0f93ba1c02f427ee04f60847b4) - Self-host frontend assets so that Gradio works offline!.  Thanks @abidlabs!
+
+### Dependency updates
+
+- @gradio/core@1.6.0
+
+## 2.2.0
+
+### Features
+
+- [#13366](https://github.com/gradio-app/gradio/pull/13366) [`10f43e0`](https://github.com/gradio-app/gradio/commit/10f43e0fe187aac9594f3a9765f8addc81b63ad1) - Offload traffic to static workers and use node as the proxy.  Thanks @freddyaboulton!
+
+### Dependency updates
+
+- @gradio/client@2.2.1
+- @gradio/core@1.5.1
+
+## 2.1.1
+
+### Dependency updates
+
+- @gradio/core@1.5.0
+
+## 2.1.1
+
+### Fixes
+
+- [#13239](https://github.com/gradio-app/gradio/pull/13239) [`9efdcb5`](https://github.com/gradio-app/gradio/commit/9efdcb57b46fc808dc55051a113154489fcc237d) - Reduce `gradio` package size by restoring frontend settings.  Thanks @abidlabs!
+- [#13210](https://github.com/gradio-app/gradio/pull/13210) [`4005b93`](https://github.com/gradio-app/gradio/commit/4005b93dd59d7e0d144619986f01e900659b3d0b) - Fix ZeroGPU handling for `gr.Server`.  Thanks @abidlabs!
+
+### Dependency updates
+
+- @gradio/client@2.2.0
+- @gradio/core@1.4.2
+
+## 2.1.0
+
+### Dependency updates
+
+- @gradio/core@1.4.2
+
+## 2.1.0
+
+### Dependency updates
+
+- @gradio/core@1.4.1
+
+## 2.1.0
+
+### Features
+
+- [#12879](https://github.com/gradio-app/gradio/pull/12879) [`c498688`](https://github.com/gradio-app/gradio/commit/c4986883b267570d76b442899c6fc09d14e3e222) - Ensure svelte version mismatches do not break custom components.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/core@1.4.0
+- @self/build@0.6.0
+
+## 2.0.6
+
+### Dependency updates
+
+- @gradio/client@2.1.0
+
+## 2.0.6
+
+### Fixes
+
+- [#12797](https://github.com/gradio-app/gradio/pull/12797) [`6a0c6ea`](https://github.com/gradio-app/gradio/commit/6a0c6eae53931ec137c0b8379428acc8a7ea27c9) - Refactor translation logic.  Thanks @hannahblair!
+
+### Dependency updates
+
+- @gradio/core@1.2.0
+
+## 2.0.5
+
+### Fixes
+
+- [#12828](https://github.com/gradio-app/gradio/pull/12828) [`151cbd1`](https://github.com/gradio-app/gradio/commit/151cbd1aac0da3aeb5f0b7b33585223d2bc47138) - Fix private spaces.  Thanks @freddyaboulton!
+- [#12835](https://github.com/gradio-app/gradio/pull/12835) [`5ecf6d2`](https://github.com/gradio-app/gradio/commit/5ecf6d27c50a20e2329c1aca0634924479ceb6cd) - Fix CSS root in spaces.  Thanks @freddyaboulton!
+- [#12817](https://github.com/gradio-app/gradio/pull/12817) [`05acc66`](https://github.com/gradio-app/gradio/commit/05acc6627de866db6a742e0540c2733041d76a86) - Fix Login.  Thanks @freddyaboulton!
+
+### Dependency updates
+
+- @gradio/client@2.0.4
+- @gradio/core@1.1.3
+
+## 2.0.4
+
+### Fixes
+
+- [#12800](https://github.com/gradio-app/gradio/pull/12800) [`7a1c321`](https://github.com/gradio-app/gradio/commit/7a1c321b6546ba05a353488f5133e8262c4a8a39) - Bump svelte/kit for security reasons.  Thanks @freddyaboulton!
+- [#12779](https://github.com/gradio-app/gradio/pull/12779) [`ea2d3e9`](https://github.com/gradio-app/gradio/commit/ea2d3e985a8b42d188e551f517c5825c00790628) - Migrate Audio + Upload + Atoms to Svelte 5.  Thanks @dawoodkhan82!
+- [#12472](https://github.com/gradio-app/gradio/pull/12472) [`9a2bc0d`](https://github.com/gradio-app/gradio/commit/9a2bc0dacdd2b3f670fae815093c61ad08eee7e3) - Re-enable SSR mode.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/client@2.0.3
+- @gradio/theme@0.6.1
+- @gradio/core@1.1.2
+- @self/build@0.5.2
+
+## 2.0.3
+
+### Fixes
+
+- [#12679](https://github.com/gradio-app/gradio/pull/12679) [`45cb6be`](https://github.com/gradio-app/gradio/commit/45cb6be9bedfbfcdad9b3ac4df26342f29143c73) - Fix SSR mode styling by enabling PostCSS custom media preprocessing.  Thanks @abidlabs!
+
+### Dependency updates
+
+- @gradio/client@2.0.2
+- @gradio/theme@0.6.0
+- @gradio/core@1.1.1
+- @self/build@0.5.1
+
+## 2.0.2
+
+### Dependency updates
+
+- @gradio/client@2.0.1
+- @gradio/core@1.1.0
+
+## 2.0.2
+
+### Fixes
+
+- [#12508](https://github.com/gradio-app/gradio/pull/12508) [`0715279`](https://github.com/gradio-app/gradio/commit/0715279005cbd6fea3c8081996aa5afddbd27e34) - Fix custom `js` param.  Thanks @dawoodkhan82!
+
+### Dependency updates
+
+- @gradio/core@1.0.2
+
+## 2.0.1
+
+### Fixes
+
+- [#12416](https://github.com/gradio-app/gradio/pull/12416) [`7e867fd`](https://github.com/gradio-app/gradio/commit/7e867fde9070849fb474a08544c72f2522a9cbe9) - Fix custom components for gradio 6.  Thanks @pngwn!
+- [#12461](https://github.com/gradio-app/gradio/pull/12461) [`9a86e80`](https://github.com/gradio-app/gradio/commit/9a86e8064787029bc20b086c6f3191879f786e0f) - Fix Login Gradio 6.  Thanks @freddyaboulton!
+
+### Dependency updates
+
+- @gradio/core@1.0.1
+
+## 2.0.0
+
+### Features
+
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - Fix browser component tests
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - Fix full width toast issue
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - Rename show_api
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - Fix Reload Mode in 6.0
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - Reduce files in build
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - fix custom components
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - gr.HTML "custom components"
+- [#12438](https://github.com/gradio-app/gradio/pull/12438) [`25ffc03`](https://github.com/gradio-app/gradio/commit/25ffc0398f8feb43d817c02b2ab970c16de6d797) - Svelte5 migration and bugfix
+
+### Dependencies
+
+- @gradio/client@2.0.0
+- @gradio/core@1.0.0
+- @gradio/theme@0.5.0
+- @self/build@0.5.0
+
+## 2.0.0-dev.3
+
+### Features
+
+- [#12383](https://github.com/gradio-app/gradio/pull/12383) [`6505763`](https://github.com/gradio-app/gradio/commit/650576399bad10f03aaa03dd9437f03b47ba378b) - Fix Reload Mode in 6.0.  Thanks @freddyaboulton!
+- [#12381](https://github.com/gradio-app/gradio/pull/12381) [`36d5657`](https://github.com/gradio-app/gradio/commit/36d5657128a81739a78d6b11b3f5a632a9027ab1) - Fix full width toast issue.  Thanks @freddyaboulton!
+- [#12391](https://github.com/gradio-app/gradio/pull/12391) [`5ba7e1e`](https://github.com/gradio-app/gradio/commit/5ba7e1e7d502017551c5899db175bcc9c6fb5eaa) - Reduce files in build.  Thanks @freddyaboulton!
+- [#12397](https://github.com/gradio-app/gradio/pull/12397) [`f2a47fe`](https://github.com/gradio-app/gradio/commit/f2a47fe4f155a1ed93ad3e8f18504e9427ba61d2) - fix custom components.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/core@1.0.0-dev.3
+- @gradio/client@2.0.0-dev.2
+- @self/build@0.5.0-dev.1
+
+## 2.0.0-dev.2
+
+### Features
+
+- [#12098](https://github.com/gradio-app/gradio/pull/12098) [`3965abe`](https://github.com/gradio-app/gradio/commit/3965abe584fef88e23501ffb67145fd47e517633) - gr.HTML "custom components".  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/theme@0.5.0-dev.0
+- @gradio/core@1.0.0-dev.1
+- @self/build@0.4.1-dev.0
+
+## 2.0.0-dev.1
+
+### Features
+
+- [#12069](https://github.com/gradio-app/gradio/pull/12069) [`9de88ca`](https://github.com/gradio-app/gradio/commit/9de88ca470ce529366d259f0deaa955f658000b9) - Rename show_api.  Thanks @freddyaboulton!
+
+### Dependency updates
+
+- @gradio/client@2.0.0-dev.1
+- @gradio/core@1.0.0-dev.0
+
+## 1.52.2-dev.0
+
+### Dependency updates
+
+- @gradio/client@2.0.0-dev.0
+- @gradio/core@0.29.2
+
+## 1.52.1
+
+### Dependency updates
+
+- @gradio/client@1.19.1
+
+## 1.52.1
+
+### Fixes
+
+- [#11972](https://github.com/gradio-app/gradio/pull/11972) [`cc27cd7`](https://github.com/gradio-app/gradio/commit/cc27cd765559a047efffe1073063cad0e071de0c) - Fix postMessage warning when running outside hugging face spaces.  Thanks @freddyaboulton!
+
+## 1.52.0
+
+### Features
+
+- [#11858](https://github.com/gradio-app/gradio/pull/11858) [`3f8ea13`](https://github.com/gradio-app/gradio/commit/3f8ea13a8ca92abf0ad34392e403a449fda3c6c2) - remove lite.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/client@1.19.0
+- @gradio/core@0.29.0
+- @self/build@0.4.0
+
+## 1.51.0
+
+### Features
+
+- [#11833](https://github.com/gradio-app/gradio/pull/11833) [`a446fcb`](https://github.com/gradio-app/gradio/commit/a446fcba6f3fe59c32194beb7f27fb6f80b61347) - Add gr.Navbar component for multipage apps.  Thanks @abidlabs!
+
+### Fixes
+
+- [#11815](https://github.com/gradio-app/gradio/pull/11815) [`1a477c5`](https://github.com/gradio-app/gradio/commit/1a477c5202c13097d1089fb70a32a08db22d7660) - Fix i18n string visible during load and i18n not respecting HTML.  Thanks @freddyaboulton!
+- [#11749](https://github.com/gradio-app/gradio/pull/11749) [`70f4532`](https://github.com/gradio-app/gradio/commit/70f4532a4dc7576dbdbe1d0a43a05644a0dfcf43) - fix various iFrame related UI issues when deploying to spaces.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/core@0.28.0
+- @gradio/client@1.18.0
+- @self/build@0.3.0
+
+## 1.50.9
+
+### Dependency updates
+
+- @gradio/client@1.17.1
+- @gradio/core@0.27.0
+
+## 1.50.8
+
+### Dependency updates
+
+- @gradio/client@1.17.0
+- @gradio/core@0.26.0
+
+## 1.50.7
+
+### Dependency updates
+
+- @gradio/client@1.16.0
+- @gradio/core@0.25.0
+
+## 1.50.6
+
+### Dependency updates
+
+- @gradio/client@1.15.7
+- @gradio/core@0.24.0
+
+## 1.50.5
+
+### Dependency updates
+
+- @gradio/core@0.23.2
+
+## 1.50.4
+
+### Features
+
+- [#11615](https://github.com/gradio-app/gradio/pull/11615) [`e2b66d7`](https://github.com/gradio-app/gradio/commit/e2b66d718f3a8f57b6ee224502849ee737b1b120) - fix change events for hidden components.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/core@0.23.1
+
+## 1.50.3
+
+### Features
+
+- [#11543](https://github.com/gradio-app/gradio/pull/11543) [`ac95ac0`](https://github.com/gradio-app/gradio/commit/ac95ac0d8c2e65d1632376e632fb7d16131334b6) - Connection handling messaging.  Thanks @aliabid94!
+- [#11584](https://github.com/gradio-app/gradio/pull/11584) [`78428cb`](https://github.com/gradio-app/gradio/commit/78428cb29bf6dc66d583b7cf93dd404aef737e75) - Fix reload mode.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/core@0.23.0
+- @gradio/client@1.15.6
+
+## 1.50.2
+
+### Fixes
+
+- [#11504](https://github.com/gradio-app/gradio/pull/11504) [`1bb635d`](https://github.com/gradio-app/gradio/commit/1bb635d7721232dd715478a1c52620771dca1a20) - Fix fonts in SSR mode.  Thanks @dawoodkhan82!
+
+### Dependency updates
+
+- @gradio/core@0.22.0
+
+## 1.50.1
+
+### Features
+
+- [#11539](https://github.com/gradio-app/gradio/pull/11539) [`6b6d95b`](https://github.com/gradio-app/gradio/commit/6b6d95b6409f9136233ba1d4f55a1cab9e040070) - Update @huggingface/space-header to 1.0.4.  Thanks @aayush4vedi!
+
+## 1.50.0
+
+### Features
+
+- [#11427](https://github.com/gradio-app/gradio/pull/11427) [`6b2bcd0`](https://github.com/gradio-app/gradio/commit/6b2bcd097ae5ef999a7fb273ecf7c7e4c0eab305) - Improve load times of the Gradio front-end.  Thanks @pngwn!
+- [#11511](https://github.com/gradio-app/gradio/pull/11511) [`1a99336`](https://github.com/gradio-app/gradio/commit/1a99336043076e7b0a4c4b07f97082f0361882f4) - Fix SSR.  Thanks @pngwn!
+
+### Fixes
+
+- [#11435](https://github.com/gradio-app/gradio/pull/11435) [`50d43a8`](https://github.com/gradio-app/gradio/commit/50d43a8e8bc2a4862668a5d46a5e6482b4f75fe3) - SSR Auth Fix.  Thanks @dawoodkhan82!
+
+### Dependency updates
+
+- @gradio/client@1.15.5
+- @gradio/core@0.21.0
+
+## 1.49.16
+
+### Fixes
+
+- [#11421](https://github.com/gradio-app/gradio/pull/11421) [`c2acf6e`](https://github.com/gradio-app/gradio/commit/c2acf6e33025fe7bbfe0660c182006651cc95090) - Preserve value in reload mode.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/client@1.15.4
+- @gradio/core@0.20.0
+
+## 1.49.15
+
+### Fixes
+
+- [#11414](https://github.com/gradio-app/gradio/pull/11414) [`b2b40b6`](https://github.com/gradio-app/gradio/commit/b2b40b633d3aae5e2538198f116abd57aab6eea4) - Fixes white background appears while a Gradio app with SSR is loading.  Thanks @dawoodkhan82!
+
+### Dependency updates
+
+- @gradio/core@0.19.3
+
+## 1.49.14
+
+### Fixes
+
+- [#11387](https://github.com/gradio-app/gradio/pull/11387) [`8245afc`](https://github.com/gradio-app/gradio/commit/8245afc669501e1e5f0d619f452455f68a3b7667) - Define root URL in frontend.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/client@1.15.3
+- @gradio/core@0.19.3
+
+## 1.49.13
+
+### Dependency updates
+
+- @gradio/core@0.19.2
+
+## 1.49.12
+
+### Dependency updates
+
+- @gradio/client@1.15.2
+- @gradio/core@0.19.1
+
+## 1.49.11
+
+### Dependency updates
+
+- @gradio/core@0.19.0
+
+## 1.49.10
+
+### Dependency updates
+
+- @gradio/client@1.15.1
+- @gradio/core@0.18.1
+
+## 1.49.9
+
+### Dependency updates
+
+- @gradio/core@0.18.0
+
+## 1.49.8
+
+### Dependency updates
+
+- @gradio/client@1.15.0
+- @gradio/core@0.17.0
+
+## 1.49.7
+
+### Dependency updates
+
+- @gradio/core@0.16.1
+
+## 1.49.6
+
+### Dependency updates
+
+- @gradio/core@0.16.0
+
+## 1.49.5
+
+### Dependency updates
+
+- @gradio/core@0.15.1
+
+## 1.49.4
+
+### Dependency updates
+
+- @gradio/core@0.15.0
+
+## 1.49.3
+
+### Dependency updates
+
+- @gradio/core@0.14.1
+
+## 1.49.2
+
+### Dependency updates
+
+- @gradio/client@1.14.2
+- @gradio/core@0.14.0
+
+## 1.49.1
+
+### Fixes
+
+- [#10968](https://github.com/gradio-app/gradio/pull/10968) [`238702a`](https://github.com/gradio-app/gradio/commit/238702a709c23f9c1b6302eb143c7cb71a3a066b) - Fix Default meta social tags + Add ability to override existing meta tags.  Thanks @dawoodkhan82!
+
+### Dependency updates
+
+- @gradio/core@0.14.0
+
+## 1.49.0
+
+### Features
+
+- [#10635](https://github.com/gradio-app/gradio/pull/10635) [`2f68c9d`](https://github.com/gradio-app/gradio/commit/2f68c9d988dcbc53a0b8e53bdb1de49c9c8c65d8) - Refactor and redesign `ImageEditor` component.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/core@0.13.2
+
+## 1.48.1
+
+### Dependency updates
+
+- @gradio/wasm@0.18.1
+- @gradio/client@1.14.1
+- @gradio/core@0.13.2
+
+## 1.48.0
+
+### Features
+
+- [#10834](https://github.com/gradio-app/gradio/pull/10834) [`c05610c`](https://github.com/gradio-app/gradio/commit/c05610c87dd7f9e9fe5d0aed2fe93e40fdd32648) - Add Deep Links.  Thanks @freddyaboulton!
+
+### Dependency updates
+
+- @gradio/client@1.14.0
+- @gradio/core@0.13.1
+- @gradio/wasm@0.18.0
+
+## 1.47.7
+
+### Dependency updates
+
+- @gradio/core@0.13.0
+
+## 1.47.6
+
+### Dependency updates
+
+- @gradio/client@1.13.1
+- @gradio/wasm@0.17.4
+- @gradio/core@0.12.1
+
+## 1.47.5
+
+### Dependency updates
+
+- @gradio/client@1.13.0
+- @gradio/core@0.12.0
+
+## 1.47.4
+
+### Dependency updates
+
+- @gradio/core@0.11.1
+
+## 1.47.3
+
+### Dependency updates
+
+- @gradio/core@0.11.0
+
+## 1.47.2
+
+### Dependency updates
+
+- @gradio/core@0.10.1
+
+## 1.47.1
+
+### Fixes
+
+- [#10533](https://github.com/gradio-app/gradio/pull/10533) [`59c892d`](https://github.com/gradio-app/gradio/commit/59c892d5620951ca404bd72cae6765cf25f15bc5) - support URL params for themes in SSR mode.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/theme@0.4.0
+- @gradio/client@1.12.0
+- @gradio/core@0.10.0
+- @gradio/wasm@0.17.3
+- @self/build@0.2.1
+
+## 1.47.0
+
+### Features
+
+- [#10433](https://github.com/gradio-app/gradio/pull/10433) [`2e8dc74`](https://github.com/gradio-app/gradio/commit/2e8dc74f751be02f7217f78d241806b42fcdca04) - Allow building multipage Gradio apps.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/client@1.11.0
+- @gradio/core@0.9.0
+
+## 1.46.3
+
+### Dependency updates
+
+- @gradio/wasm@0.17.2
+- @gradio/core@0.8.0
+
+## 1.46.2
+
+### Dependency updates
+
+- @gradio/wasm@0.17.1
+- @gradio/core@0.7.0
+
+## 1.46.1
+
+### Dependency updates
+
+- @gradio/wasm@0.17.0
+- @gradio/core@0.7.0
+
+## 1.46.0
+
+### Features
+
+- [#10270](https://github.com/gradio-app/gradio/pull/10270) [`bb11a2a`](https://github.com/gradio-app/gradio/commit/bb11a2a702ca04fde245e7d54d155cbcbde7791e) - [ZeroGPU] Handshake-based postMessage.  Thanks @cbensimon!
+
+### Dependency updates
+
+- @gradio/client@1.10.0
+- @gradio/core@0.6.1
+
+## 1.45.0
+
+### Features
+
+- [#10187](https://github.com/gradio-app/gradio/pull/10187) [`64d1864`](https://github.com/gradio-app/gradio/commit/64d1864f8fb6f2d0b274fcf7bd47bdb1f6a77980) - `manifest json` for PWA.  Thanks @whitphx!
+
+### Dependency updates
+
+- @gradio/client@1.9.0
+- @gradio/wasm@0.16.0
+- @gradio/core@0.6.0
+
+## 1.44.2
+
+### Dependency updates
+
+- @gradio/core@0.5.0
+
+## 1.44.1
+
+### Dependency updates
+
+- @gradio/core@0.4.1
+
+## 1.44.0
+
+### Features
+
+- [#9950](https://github.com/gradio-app/gradio/pull/9950) [`fc06fe4`](https://github.com/gradio-app/gradio/commit/fc06fe41f015678a0545f4e5c99f6ae2704f0031) - Add ability to read and write from LocalStorage.  Thanks @abidlabs!
+
+### Dependency updates
+
+- @gradio/client@1.8.0
+- @gradio/core@0.4.0
+
+## 1.43.1
+
+### Dependency updates
+
+- @gradio/wasm@0.15.0
+- @gradio/core@0.3.0
+
+## 1.43.0
+
+### Features
+
+- [#9794](https://github.com/gradio-app/gradio/pull/9794) [`70bda3b`](https://github.com/gradio-app/gradio/commit/70bda3bb187a7219f4707344cf47edd0a021da19) - fix storybook build.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/client@1.7.1
+- @gradio/core@0.2.1
+
+## 1.42.1
+
+### Fixes
+
+- [#9653](https://github.com/gradio-app/gradio/pull/9653) [`61cd768`](https://github.com/gradio-app/gradio/commit/61cd768490a12f5d63101d5434092bcd1cfc43a8) - Ensures tabs with visible set to false are not visible.  Thanks @hannahblair!
+
+### Dependency updates
+
+- @self/build@0.2.0
+- @gradio/core@0.2.1
+
+## 1.42.0
+
+### Features
+
+- [#9681](https://github.com/gradio-app/gradio/pull/9681) [`2ed2361`](https://github.com/gradio-app/gradio/commit/2ed236187a9aab18e17fc4a8079eddef7dd195a5) - Allow setting title in gr.Info/Warning/Error.  Thanks @ABucket!
+
+### Dependency updates
+
+- @gradio/client@1.7.0
+- @gradio/wasm@0.14.2
+- @self/build@0.1.1
+- @gradio/core@0.2.0
+
+## 1.41.2
+
+### Fixes
+
+- [#9669](https://github.com/gradio-app/gradio/pull/9669) [`70998ea`](https://github.com/gradio-app/gradio/commit/70998ea75276e677595447ac36b67e1152e589a2) - fix height in iframe.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/wasm@0.14.1
+- @gradio/core@0.1.1
+
+## 1.41.1
+
+### Features
+
+- [#9617](https://github.com/gradio-app/gradio/pull/9617) [`c163182`](https://github.com/gradio-app/gradio/commit/c163182d1b752ef91629f9caa13bf3cce0fb0869) - Fix dark mode detection and container height.  Thanks @pngwn!
+- [#9616](https://github.com/gradio-app/gradio/pull/9616) [`ca7cd79`](https://github.com/gradio-app/gradio/commit/ca7cd79e7bdbc50570372c19391083a0f6501576) - fix devmode.  Thanks @pngwn!
+
+### Fixes
+
+- [#9630](https://github.com/gradio-app/gradio/pull/9630) [`2eaa066`](https://github.com/gradio-app/gradio/commit/2eaa0667e1d1a0edd1089bf8c3ffa3f563b9bca2) - Fix duplicate attribute error.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/core@0.1.1
+
+## 1.41.0
+
+### Features
+
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - SSR e2e + fixes
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - Fix custom component CLI on main/5.0
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - fix css
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - Fix reload mode
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - fix SSR apps on spaces
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - Fix favicon in ssr mode
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - Ssr part 2
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - Ensure media queries work for SSR mode
+
+### Dependencies
+
+- @gradio/client@1.6.0
+- @gradio/core@0.1.0
+- @gradio/theme@0.3.0
+- @gradio/wasm@0.14.0
+- @self/build@0.1.0
+
+## 1.41.0-beta.7
+
+### Features
+
+- [#9590](https://github.com/gradio-app/gradio/pull/9590) [`e853c41`](https://github.com/gradio-app/gradio/commit/e853c413583d91186aef3aceb0849d0ec0494834) - SSR e2e + fixes.  Thanks @pngwn!
+- [#9482](https://github.com/gradio-app/gradio/pull/9482) [`bd6c5f2`](https://github.com/gradio-app/gradio/commit/bd6c5f237b0631d86273c7684c3bf2b1011992a3) - Fix custom component CLI on main/5.0.  Thanks @freddyaboulton!
+- [#9576](https://github.com/gradio-app/gradio/pull/9576) [`430a26a`](https://github.com/gradio-app/gradio/commit/430a26a4fbcbabb5e9ddb6173bf658a00960e88e) - Fix reload mode.  Thanks @freddyaboulton!
+- [#9592](https://github.com/gradio-app/gradio/pull/9592) [`24fe222`](https://github.com/gradio-app/gradio/commit/24fe222fd17583d04dd31aebf60b649224e8382f) - Fix favicon in ssr mode.  Thanks @freddyaboulton!
+
+### Dependency updates
+
+- @gradio/core@0.1.0-beta.6
+- @self/build@0.1.0-beta.3
+
+## 1.41.0-beta.6
+
+### Dependency updates
+
+- @gradio/client@1.6.0-beta.4
+- @gradio/core@0.1.0-beta.5
+
+## 1.41.0-beta.5
+
+### Features
+
+- [#9428](https://github.com/gradio-app/gradio/pull/9428) [`a17c7b6`](https://github.com/gradio-app/gradio/commit/a17c7b6e01bcee88b57a5231d0ff876f79adb8b1) - Ensure media queries work for SSR mode.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/core@0.1.0-beta.4
+
+## 1.41.0-beta.4
+
+### Dependency updates
+
+- @gradio/wasm@0.14.0-beta.3
+- @gradio/core@0.1.0-beta.4
+
+## 1.41.0-beta.3
+
+### Features
+
+- [#9427](https://github.com/gradio-app/gradio/pull/9427) [`b672deb`](https://github.com/gradio-app/gradio/commit/b672deb240e1934f3cde6d257dbe93e3fa8b1857) - fix css.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/core@0.1.0-beta.3
+
+## 1.41.0-beta.2
+
+### Features
+
+- [#9412](https://github.com/gradio-app/gradio/pull/9412) [`c2c2fd9`](https://github.com/gradio-app/gradio/commit/c2c2fd989348f826566773c07c0e0bda200199ff) - fix SSR apps on spaces.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/client@1.6.0-beta.3
+- @gradio/core@0.1.0-beta.3
+
+## 1.41.0-beta.1
+
+### Features
+
+- [#9339](https://github.com/gradio-app/gradio/pull/9339) [`4c8c6f2`](https://github.com/gradio-app/gradio/commit/4c8c6f2fe603081941c5fdc43f48a0632b9f31ad) - Ssr part 2.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/wasm@0.14.0-beta.2
+- @gradio/client@1.6.0-beta.2
+- @gradio/core@0.1.0-beta.2
+- @self/build@0.1.0-beta.2
+
+## 1.40.1-beta.0
+
+### Fixes
+
+- [#9163](https://github.com/gradio-app/gradio/pull/9163) [`2b6cbf2`](https://github.com/gradio-app/gradio/commit/2b6cbf25908e42cf027324e54ef2cc0baad11a91) - fix exports and generate types.  Thanks @pngwn!
+
+## 1.40.0
+
+### Features
+
+- [#8935](https://github.com/gradio-app/gradio/pull/8935) [`f6b2b97`](https://github.com/gradio-app/gradio/commit/f6b2b97d473dd81571410cccc6e1ddfcf9fa00bc) - Initialize the client with the fake host for Lite server.  Thanks @whitphx!
+- [#9102](https://github.com/gradio-app/gradio/pull/9102) [`efdc323`](https://github.com/gradio-app/gradio/commit/efdc3231a7bde38cfe45d10086d0d36a24c1b9b4) - Initial SSR refactor.  Thanks @pngwn!
+- [#9110](https://github.com/gradio-app/gradio/pull/9110) [`e1e7ad3`](https://github.com/gradio-app/gradio/commit/e1e7ad3add2679cafab5c05856aba6e28c0f2b76) - fix version + pkg name.  Thanks @pngwn!
+
+## 1.39.2
+
+### Dependency updates
+
+- @gradio/code@0.8.2
+- @gradio/paramviewer@0.4.20
+- @gradio/atoms@0.7.9
+- @gradio/statustracker@0.7.4
+- @gradio/column@0.1.2
+- @gradio/client@1.5.0
+- @gradio/gallery@0.12.0
+- @gradio/icons@0.7.0
+- @gradio/upload@0.12.2
+- @gradio/markdown@0.9.2
+- @gradio/plot@0.6.3
+- @gradio/image@0.14.0
+- @gradio/file@0.9.2
+- @gradio/chatbot@0.12.4
+- @gradio/annotatedimage@0.7.0
+- @gradio/imageeditor@0.9.0
+- @gradio/nativeplot@0.3.0
+- @gradio/model3d@0.12.0
+- @gradio/audio@0.13.2
+- @gradio/button@0.2.49
+- @gradio/dataframe@0.9.2
+- @gradio/dataset@0.2.3
+- @gradio/downloadbutton@0.1.26
+- @gradio/fileexplorer@0.4.17
+- @gradio/multimodaltextbox@0.5.5
+- @gradio/simpleimage@0.6.5
+- @gradio/uploadbutton@0.6.17
+- @gradio/video@0.10.2
+- @gradio/datetime@0.1.2
+- @gradio/dropdown@0.7.11
+- @gradio/form@0.1.23
+- @gradio/highlightedtext@0.7.5
+- @gradio/html@0.3.4
+- @gradio/json@0.3.1
+- @gradio/label@0.3.11
+- @gradio/simpledropdown@0.2.11
+- @gradio/simpletextbox@0.2.11
+- @gradio/textbox@0.6.10
+- @gradio/accordion@0.3.21
+- @gradio/box@0.1.23
+- @gradio/checkbox@0.3.11
+- @gradio/checkboxgroup@0.5.11
+- @gradio/colorpicker@0.3.11
+- @gradio/fallback@0.3.11
+- @gradio/number@0.4.11
+- @gradio/radio@0.5.11
+- @gradio/slider@0.4.11
+- @gradio/row@0.1.3
+
+## 1.39.1
+
+### Dependency updates
+
+- @gradio/atoms@0.7.8
+- @gradio/icons@0.6.1
+- @gradio/utils@0.5.2
+- @gradio/statustracker@0.7.3
+- @gradio/upload@0.12.1
+- @gradio/image@0.13.1
+- @gradio/video@0.10.1
+- @gradio/code@0.8.1
+- @gradio/paramviewer@0.4.19
+- @gradio/json@0.3.0
+- @gradio/multimodaltextbox@0.5.4
+- @gradio/nativeplot@0.2.0
+- @gradio/annotatedimage@0.6.15
+- @gradio/audio@0.13.1
+- @gradio/chatbot@0.12.3
+- @gradio/datetime@0.1.1
+- @gradio/dropdown@0.7.10
+- @gradio/file@0.9.1
+- @gradio/fileexplorer@0.4.16
+- @gradio/form@0.1.22
+- @gradio/gallery@0.11.4
+- @gradio/highlightedtext@0.7.4
+- @gradio/imageeditor@0.8.1
+- @gradio/label@0.3.10
+- @gradio/markdown@0.9.1
+- @gradio/model3d@0.11.2
+- @gradio/plot@0.6.2
+- @gradio/simpledropdown@0.2.10
+- @gradio/simpleimage@0.6.4
+- @gradio/simpletextbox@0.2.10
+- @gradio/textbox@0.6.9
+- @gradio/button@0.2.48
+- @gradio/dataframe@0.9.1
+- @gradio/dataset@0.2.2
+- @gradio/uploadbutton@0.6.16
+- @gradio/accordion@0.3.20
+- @gradio/checkbox@0.3.10
+- @gradio/checkboxgroup@0.5.10
+- @gradio/colorpicker@0.3.10
+- @gradio/column@0.1.2
+- @gradio/downloadbutton@0.1.25
+- @gradio/fallback@0.3.10
+- @gradio/html@0.3.3
+- @gradio/number@0.4.10
+- @gradio/radio@0.5.10
+- @gradio/row@0.1.3
+- @gradio/slider@0.4.10
+- @gradio/tabitem@0.2.13
+- @gradio/tabs@0.2.12
+- @gradio/timer@0.3.1
+- @gradio/group@0.1.1
+- @gradio/box@0.1.22
+
+## 1.39.0
+
+### Features
+
+- [#8832](https://github.com/gradio-app/gradio/pull/8832) [`e75f2ca`](https://github.com/gradio-app/gradio/commit/e75f2ca2da4f41f25459b98bedaa940c887e6a93) - Fix build for pre-release.  Thanks @pngwn!
+- [#8846](https://github.com/gradio-app/gradio/pull/8846) [`76c1759`](https://github.com/gradio-app/gradio/commit/76c175935019833baef709a5cf401d2263ca72ee) - add space header.  Thanks @pngwn!
+- [#8804](https://github.com/gradio-app/gradio/pull/8804) [`1d09925`](https://github.com/gradio-app/gradio/commit/1d09925469a5f96e8d3a972a28841903fa1c7265) - Fix Lite's <Playground />.  Thanks @whitphx!
+- [#8807](https://github.com/gradio-app/gradio/pull/8807) [`a238af4`](https://github.com/gradio-app/gradio/commit/a238af4d688c4e030e37c2ef01d5c80d6d940912) - Refactor plots to drop `altair` and use `vega.js` directly.  Thanks @aliabid94!
+
+### Fixes
+
+- [#8818](https://github.com/gradio-app/gradio/pull/8818) [`2de9a97`](https://github.com/gradio-app/gradio/commit/2de9a97ae953cc5c58c0d33d8966e638e76f950f) - Refactoring <gradio-lite /> component making the code simpler and fixing a Playground mode bug.  Thanks @whitphx!
+
+### Dependency updates
+
+- @gradio/code@0.8.0
+- @gradio/paramviewer@0.4.18
+- @gradio/audio@0.13.0
+- @gradio/video@0.10.0
+- @gradio/wasm@0.12.0
+- @gradio/markdown@0.9.0
+- @gradio/chatbot@0.12.2
+- @gradio/client@1.4.0
+- @gradio/image@0.13.0
+- @gradio/dataframe@0.9.0
+- @gradio/statustracker@0.7.2
+- @gradio/imageeditor@0.8.0
+- @gradio/file@0.9.0
+- @gradio/upload@0.12.0
+- @gradio/datetime@0.1.0
+- @gradio/nativeplot@0.1.0
+- @gradio/atoms@0.7.7
+- @gradio/simpleimage@0.6.3
+- @gradio/annotatedimage@0.6.14
+- @gradio/model3d@0.11.1
+- @gradio/button@0.2.47
+- @gradio/dataset@0.2.1
+- @gradio/downloadbutton@0.1.24
+- @gradio/fileexplorer@0.4.15
+- @gradio/gallery@0.11.3
+- @gradio/multimodaltextbox@0.5.3
+- @gradio/uploadbutton@0.6.15
+- @gradio/accordion@0.3.19
+- @gradio/checkbox@0.3.9
+- @gradio/checkboxgroup@0.5.9
+- @gradio/colorpicker@0.3.9
+- @gradio/column@0.1.2
+- @gradio/dropdown@0.7.9
+- @gradio/fallback@0.3.9
+- @gradio/highlightedtext@0.7.3
+- @gradio/html@0.3.2
+- @gradio/json@0.2.9
+- @gradio/label@0.3.9
+- @gradio/number@0.4.9
+- @gradio/plot@0.6.1
+- @gradio/radio@0.5.9
+- @gradio/row@0.1.3
+- @gradio/simpledropdown@0.2.9
+- @gradio/simpletextbox@0.2.9
+- @gradio/slider@0.4.9
+- @gradio/textbox@0.6.8
+- @gradio/box@0.1.21
+- @gradio/form@0.1.21
+
+## 1.38.1
+
+### Dependency updates
+
+- @gradio/chatbot@0.12.1
+
+## 1.38.0
+
+### Features
+
+- [#8713](https://github.com/gradio-app/gradio/pull/8713) [`e3c7079`](https://github.com/gradio-app/gradio/commit/e3c7079e380880d5759d98d180eaf688122f1c69) - Time range component.  Thanks @aliabid94!
+
+### Fixes
+
+- [#8505](https://github.com/gradio-app/gradio/pull/8505) [`2943d6d`](https://github.com/gradio-app/gradio/commit/2943d6d68847314885dc6c5c0247083116017ca0) - Add Timer component.  Thanks @aliabid94!
+- [#8720](https://github.com/gradio-app/gradio/pull/8720) [`936c713`](https://github.com/gradio-app/gradio/commit/936c7137a99ef59efdf75bae5dd27eea2ac1f577) - Documents auth in the guides, in the view API page, and also types the Blocks.config object.  Thanks @abidlabs!
+
+### Dependency updates
+
+- @gradio/atoms@0.7.6
+- @gradio/utils@0.5.1
+- @gradio/statustracker@0.7.1
+- @gradio/client@1.3.0
+- @gradio/markdown@0.8.1
+- @gradio/upload@0.11.5
+- @gradio/button@0.2.46
+- @gradio/paramviewer@0.4.17
+- @gradio/dataframe@0.8.13
+- @gradio/timer@0.3.0
+- @gradio/code@0.7.0
+- @gradio/chatbot@0.12.0
+- @gradio/image@0.12.2
+- @gradio/icons@0.6.0
+- @gradio/plot@0.6.0
+- @gradio/dataset@0.2.0
+- @gradio/model3d@0.11.0
+- @gradio/annotatedimage@0.6.13
+- @gradio/audio@0.12.2
+- @gradio/downloadbutton@0.1.23
+- @gradio/file@0.8.5
+- @gradio/fileexplorer@0.4.14
+- @gradio/gallery@0.11.2
+- @gradio/imageeditor@0.7.13
+- @gradio/multimodaltextbox@0.5.2
+- @gradio/simpleimage@0.6.2
+- @gradio/uploadbutton@0.6.14
+- @gradio/video@0.9.2
+- @gradio/accordion@0.3.18
+- @gradio/checkbox@0.3.8
+- @gradio/checkboxgroup@0.5.8
+- @gradio/colorpicker@0.3.8
+- @gradio/column@0.1.2
+- @gradio/datetime@0.0.2
+- @gradio/dropdown@0.7.8
+- @gradio/fallback@0.3.8
+- @gradio/form@0.1.20
+- @gradio/highlightedtext@0.7.2
+- @gradio/html@0.3.1
+- @gradio/json@0.2.8
+- @gradio/label@0.3.8
+- @gradio/number@0.4.8
+- @gradio/radio@0.5.8
+- @gradio/row@0.1.3
+- @gradio/simpledropdown@0.2.8
+- @gradio/simpletextbox@0.2.8
+- @gradio/slider@0.4.8
+- @gradio/tabitem@0.2.12
+- @gradio/tabs@0.2.11
+- @gradio/textbox@0.6.7
+- @gradio/group@0.1.1
+- @gradio/box@0.1.20
+
+## 1.37.1
+
+### Dependency updates
+
+- @gradio/code@0.6.13
+- @gradio/upload@0.11.4
+- @gradio/client@1.2.1
+- @gradio/gallery@0.11.1
+- @gradio/image@0.12.1
+- @gradio/chatbot@0.11.1
+- @gradio/file@0.8.4
+- @gradio/multimodaltextbox@0.5.1
+- @gradio/fileexplorer@0.4.13
+- @gradio/annotatedimage@0.6.12
+- @gradio/audio@0.12.1
+- @gradio/button@0.2.45
+- @gradio/dataframe@0.8.12
+- @gradio/dataset@0.1.45
+- @gradio/imageeditor@0.7.12
+- @gradio/model3d@0.10.12
+- @gradio/simpleimage@0.6.1
+- @gradio/uploadbutton@0.6.13
+- @gradio/video@0.9.1
+- @gradio/downloadbutton@0.1.22
+
+## 1.37.0
+
+### Features
+
+- [#8131](https://github.com/gradio-app/gradio/pull/8131) [`bb504b4`](https://github.com/gradio-app/gradio/commit/bb504b494947a287d6386e0e7ead3860c0f15223) - Gradio components in `gr.Chatbot()`.  Thanks @dawoodkhan82!
+- [#8489](https://github.com/gradio-app/gradio/pull/8489) [`c2a0d05`](https://github.com/gradio-app/gradio/commit/c2a0d056d679d90631d9ccd944dadd67e7e03b7f) - Control Display of Error, Info, Warning.  Thanks @freddyaboulton!
+- [#8571](https://github.com/gradio-app/gradio/pull/8571) [`a77877f`](https://github.com/gradio-app/gradio/commit/a77877f62df7c610fcfac7b3b00e186a087c8ec6) - First time loading performance optimization.  Thanks @baojianting!
+
+### Fixes
+
+- [#8599](https://github.com/gradio-app/gradio/pull/8599) [`ca125b7`](https://github.com/gradio-app/gradio/commit/ca125b728a0803a5b5ed71a5189e6b68175edcad) - Fix reload mode for jupyter notebook and stateful demos.  Thanks @freddyaboulton!
+- [#8521](https://github.com/gradio-app/gradio/pull/8521) [`900cf25`](https://github.com/gradio-app/gradio/commit/900cf25256a5b0563860097d69aac28b6afbfd8b) - Ensure frontend functions work when they don't return a value.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/code@0.6.12
+- @gradio/atoms@0.7.5
+- @gradio/audio@0.12.0
+- @gradio/chatbot@0.11.0
+- @gradio/gallery@0.11.0
+- @gradio/image@0.12.0
+- @gradio/multimodaltextbox@0.5.0
+- @gradio/plot@0.5.0
+- @gradio/simpleimage@0.6.0
+- @gradio/utils@0.5.0
+- @gradio/video@0.9.0
+- @gradio/icons@0.5.0
+- @gradio/wasm@0.11.0
+- @gradio/client@1.2.0
+- @gradio/statustracker@0.7.0
+- @gradio/html@0.3.0
+- @gradio/dataset@0.1.44
+- @gradio/markdown@0.8.0
+- @gradio/imageeditor@0.7.11
+- @gradio/accordion@0.3.17
+- @gradio/annotatedimage@0.6.11
+- @gradio/button@0.2.44
+- @gradio/checkbox@0.3.7
+- @gradio/checkboxgroup@0.5.7
+- @gradio/colorpicker@0.3.7
+- @gradio/column@0.1.2
+- @gradio/dataframe@0.8.11
+- @gradio/downloadbutton@0.1.21
+- @gradio/dropdown@0.7.7
+- @gradio/fallback@0.3.7
+- @gradio/file@0.8.3
+- @gradio/fileexplorer@0.4.12
+- @gradio/form@0.1.19
+- @gradio/highlightedtext@0.7.1
+- @gradio/json@0.2.7
+- @gradio/label@0.3.7
+- @gradio/model3d@0.10.11
+- @gradio/number@0.4.7
+- @gradio/paramviewer@0.4.16
+- @gradio/radio@0.5.7
+- @gradio/row@0.1.3
+- @gradio/simpledropdown@0.2.7
+- @gradio/simpletextbox@0.2.7
+- @gradio/slider@0.4.7
+- @gradio/tabitem@0.2.11
+- @gradio/tabs@0.2.10
+- @gradio/textbox@0.6.6
+- @gradio/upload@0.11.3
+- @gradio/uploadbutton@0.6.12
+- @gradio/group@0.1.1
+- @gradio/box@0.1.19
+
+## 1.36.2
+
+### Features
+
+- [#8499](https://github.com/gradio-app/gradio/pull/8499) [`c5f6e77`](https://github.com/gradio-app/gradio/commit/c5f6e7722a197d4706419ade14276ddecf3196f8) - Cache break themes on change.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/code@0.6.11
+- @gradio/client@1.1.1
+- @gradio/upload@0.11.2
+- @gradio/annotatedimage@0.6.10
+- @gradio/audio@0.11.10
+- @gradio/button@0.2.43
+- @gradio/chatbot@0.10.11
+- @gradio/dataframe@0.8.10
+- @gradio/dataset@0.1.43
+- @gradio/file@0.8.2
+- @gradio/fileexplorer@0.4.11
+- @gradio/gallery@0.10.10
+- @gradio/image@0.11.10
+- @gradio/imageeditor@0.7.10
+- @gradio/model3d@0.10.10
+- @gradio/multimodaltextbox@0.4.11
+- @gradio/simpleimage@0.5.10
+- @gradio/uploadbutton@0.6.11
+- @gradio/video@0.8.10
+- @gradio/downloadbutton@0.1.20
+
+## 1.36.1
+
+### Dependency updates
+
+- @gradio/upload@0.11.1
+- @gradio/code@0.6.10
+- @gradio/client@1.1.0
+- @gradio/annotatedimage@0.6.9
+- @gradio/audio@0.11.9
+- @gradio/button@0.2.42
+- @gradio/chatbot@0.10.10
+- @gradio/dataframe@0.8.9
+- @gradio/dataset@0.1.42
+- @gradio/downloadbutton@0.1.19
+- @gradio/file@0.8.1
+- @gradio/fileexplorer@0.4.10
+- @gradio/gallery@0.10.9
+- @gradio/image@0.11.9
+- @gradio/imageeditor@0.7.9
+- @gradio/model3d@0.10.9
+- @gradio/multimodaltextbox@0.4.10
+- @gradio/simpleimage@0.5.9
+- @gradio/uploadbutton@0.6.10
+- @gradio/video@0.8.9
+
+## 1.36.0
+
+### Features
+
+- [#8370](https://github.com/gradio-app/gradio/pull/8370) [`48eeea4`](https://github.com/gradio-app/gradio/commit/48eeea4eaab7e24168688e3c3fbafb30e4e78d51) - Refactor Cancelling Logic To Use /cancel.  Thanks @freddyaboulton!
+- [#8460](https://github.com/gradio-app/gradio/pull/8460) [`8628899`](https://github.com/gradio-app/gradio/commit/86288993d9589ceb7bcc3e4d10f0adb6419d4ac5) - Support Bash in Api Recorder.  Thanks @aliabd!
+- [#8444](https://github.com/gradio-app/gradio/pull/8444) [`2cd02ff`](https://github.com/gradio-app/gradio/commit/2cd02ff3b7c57cd69635d111ff25643eba30b9b0) - Remove deprecated parameters from Python Client.  Thanks @abidlabs!
+- [#8473](https://github.com/gradio-app/gradio/pull/8473) [`8ca93d4`](https://github.com/gradio-app/gradio/commit/8ca93d45dd9f8948cfe87fe16ef5943139e756a7) - Improve design of api recorder.  Thanks @aliabd!
+- [#8445](https://github.com/gradio-app/gradio/pull/8445) [`5c8915b`](https://github.com/gradio-app/gradio/commit/5c8915b11308756c3b7279864d240ea85f5a0b4a) - Add cURL to view API Page and add a dedicated Guide.  Thanks @abidlabs!
+
+### Fixes
+
+- [#8451](https://github.com/gradio-app/gradio/pull/8451) [`9d2d605`](https://github.com/gradio-app/gradio/commit/9d2d6051caed5c8749a26a6fa7480a5ae6e6c4f3) - Change client submit API to be an AsyncIterable and support more platforms.  Thanks @pngwn!
+- [#8439](https://github.com/gradio-app/gradio/pull/8439) [`63d36fb`](https://github.com/gradio-app/gradio/commit/63d36fbbf4bf6dc909be9a0ffc7b6bf6621d83e8) - Handle gradio apps using `state` in the JS Client.  Thanks @hannahblair!
+
+### Dependency updates
+
+- @gradio/code@0.6.9
+- @gradio/statustracker@0.6.0
+- @gradio/client@1.0.0
+- @gradio/file@0.8.0
+- @gradio/upload@0.11.0
+- @gradio/annotatedimage@0.6.8
+- @gradio/audio@0.11.8
+- @gradio/button@0.2.41
+- @gradio/chatbot@0.10.9
+- @gradio/dataframe@0.8.8
+- @gradio/dataset@0.1.41
+- @gradio/downloadbutton@0.1.18
+- @gradio/fileexplorer@0.4.9
+- @gradio/gallery@0.10.8
+- @gradio/image@0.11.8
+- @gradio/imageeditor@0.7.8
+- @gradio/model3d@0.10.8
+- @gradio/multimodaltextbox@0.4.9
+- @gradio/simpleimage@0.5.8
+- @gradio/uploadbutton@0.6.9
+- @gradio/video@0.8.8
+- @gradio/accordion@0.3.16
+- @gradio/checkbox@0.3.6
+- @gradio/checkboxgroup@0.5.6
+- @gradio/colorpicker@0.3.6
+- @gradio/column@0.1.2
+- @gradio/dropdown@0.7.6
+- @gradio/fallback@0.3.6
+- @gradio/form@0.1.18
+- @gradio/group@0.1.1
+- @gradio/highlightedtext@0.7.0
+- @gradio/html@0.2.6
+- @gradio/json@0.2.6
+- @gradio/label@0.3.6
+- @gradio/markdown@0.7.6
+- @gradio/number@0.4.6
+- @gradio/paramviewer@0.4.15
+- @gradio/plot@0.4.6
+- @gradio/radio@0.5.6
+- @gradio/row@0.1.3
+- @gradio/simpledropdown@0.2.6
+- @gradio/simpletextbox@0.2.6
+- @gradio/slider@0.4.6
+- @gradio/tabitem@0.2.10
+- @gradio/tabs@0.2.9
+- @gradio/textbox@0.6.5
+
+## 1.35.9
+
+### Dependency updates
+
+- @gradio/chatbot@0.10.8
+- @gradio/multimodaltextbox@0.4.8
+
+## 1.35.8
+
+### Fixes
+
+- [#8431](https://github.com/gradio-app/gradio/pull/8431) [`9909b28`](https://github.com/gradio-app/gradio/commit/9909b28364b82b5e8bfd7d47a858a204f68b963a) - fix scrolling on spaces.  Thanks @pngwn!
+
+## 1.35.7
+
+### Dependency updates
+
+- @gradio/upload@0.10.7
+- @gradio/code@0.6.8
+- @gradio/client@0.20.1
+- @gradio/annotatedimage@0.6.7
+- @gradio/audio@0.11.7
+- @gradio/button@0.2.40
+- @gradio/chatbot@0.10.7
+- @gradio/dataframe@0.8.7
+- @gradio/dataset@0.1.40
+- @gradio/downloadbutton@0.1.17
+- @gradio/file@0.7.7
+- @gradio/fileexplorer@0.4.8
+- @gradio/gallery@0.10.7
+- @gradio/image@0.11.7
+- @gradio/imageeditor@0.7.7
+- @gradio/model3d@0.10.7
+- @gradio/multimodaltextbox@0.4.7
+- @gradio/simpleimage@0.5.7
+- @gradio/uploadbutton@0.6.8
+- @gradio/video@0.8.7
+
+## 1.35.6
+
+### Features
+
+- [#8243](https://github.com/gradio-app/gradio/pull/8243) [`55f664f`](https://github.com/gradio-app/gradio/commit/55f664f2979a49acc29a73cde16c6ebdfcc91db2) - Add event listener support to render blocks.  Thanks @aliabid94!
+- [#8398](https://github.com/gradio-app/gradio/pull/8398) [`945ac83`](https://github.com/gradio-app/gradio/commit/945ac837e779b120790814ea6f6f81bd2712f5f8) - Improve rendering.  Thanks @aliabid94!
+
+### Dependency updates
+
+- @gradio/code@0.6.7
+- @gradio/client@0.20.0
+- @gradio/model3d@0.10.6
+- @gradio/column@0.1.2
+- @gradio/row@0.1.3
+- @gradio/statustracker@0.6.0
+- @gradio/dataset@0.1.39
+- @gradio/accordion@0.3.16
+- @gradio/highlightedtext@0.7.0
+- @gradio/annotatedimage@0.6.6
+- @gradio/audio@0.11.6
+- @gradio/button@0.2.39
+- @gradio/chatbot@0.10.6
+- @gradio/dataframe@0.8.6
+- @gradio/downloadbutton@0.1.16
+- @gradio/file@0.7.6
+- @gradio/fileexplorer@0.4.7
+- @gradio/gallery@0.10.6
+- @gradio/image@0.11.6
+- @gradio/imageeditor@0.7.6
+- @gradio/multimodaltextbox@0.4.6
+- @gradio/simpleimage@0.5.6
+- @gradio/upload@0.10.6
+- @gradio/uploadbutton@0.6.7
+- @gradio/video@0.8.6
+- @gradio/tabitem@0.2.10
+- @gradio/checkbox@0.3.6
+- @gradio/checkboxgroup@0.5.6
+- @gradio/colorpicker@0.3.6
+- @gradio/dropdown@0.7.6
+- @gradio/fallback@0.3.6
+- @gradio/html@0.2.6
+- @gradio/json@0.2.6
+- @gradio/label@0.3.6
+- @gradio/markdown@0.7.6
+- @gradio/number@0.4.6
+- @gradio/paramviewer@0.4.15
+- @gradio/plot@0.4.6
+- @gradio/radio@0.5.6
+- @gradio/simpledropdown@0.2.6
+- @gradio/simpletextbox@0.2.6
+- @gradio/slider@0.4.6
+- @gradio/textbox@0.6.5
+
+## 1.35.5
+
+### Dependency updates
+
+- @gradio/utils@0.4.2
+- @gradio/atoms@0.7.4
+- @gradio/statustracker@0.5.5
+- @gradio/upload@0.10.5
+- @gradio/tabs@0.2.9
+- @gradio/code@0.6.6
+- @gradio/markdown@0.7.5
+- @gradio/theme@0.2.3
+- @gradio/client@0.19.4
+- @gradio/audio@0.11.5
+- @gradio/image@0.11.5
+- @gradio/video@0.8.5
+- @gradio/chatbot@0.10.5
+- @gradio/file@0.7.5
+- @gradio/dataframe@0.8.5
+- @gradio/highlightedtext@0.6.4
+- @gradio/plot@0.4.5
+- @gradio/fileexplorer@0.4.6
+- @gradio/gallery@0.10.5
+- @gradio/annotatedimage@0.6.5
+- @gradio/button@0.2.38
+- @gradio/dataset@0.1.38
+- @gradio/downloadbutton@0.1.15
+- @gradio/imageeditor@0.7.5
+- @gradio/model3d@0.10.5
+- @gradio/multimodaltextbox@0.4.5
+- @gradio/simpleimage@0.5.5
+- @gradio/uploadbutton@0.6.6
+- @gradio/accordion@0.3.15
+- @gradio/checkbox@0.3.5
+- @gradio/checkboxgroup@0.5.5
+- @gradio/colorpicker@0.3.5
+- @gradio/dropdown@0.7.5
+- @gradio/fallback@0.3.5
+- @gradio/form@0.1.18
+- @gradio/html@0.2.5
+- @gradio/json@0.2.5
+- @gradio/label@0.3.5
+- @gradio/number@0.4.5
+- @gradio/paramviewer@0.4.14
+- @gradio/radio@0.5.5
+- @gradio/simpledropdown@0.2.5
+- @gradio/simpletextbox@0.2.5
+- @gradio/slider@0.4.5
+- @gradio/tabitem@0.2.9
+- @gradio/textbox@0.6.4
+- @gradio/box@0.1.18
 
 ## 1.35.4
 

@@ -1,68 +1,88 @@
-<script context="module" lang="ts">
-	export { default as MarkdownCode } from "./shared/MarkdownCode.svelte";
+<script module lang="ts">
 	export { default as BaseMarkdown } from "./shared/Markdown.svelte";
 	export { default as BaseExample } from "./Example.svelte";
 </script>
 
 <script lang="ts">
-	import type { Gradio } from "@gradio/utils";
+	import { tick } from "svelte";
+	import { Gradio, should_show_scroll_fade } from "@gradio/utils";
 	import Markdown from "./shared/Markdown.svelte";
 
 	import { StatusTracker } from "@gradio/statustracker";
-	import type { LoadingStatus } from "@gradio/statustracker";
-	import { Block } from "@gradio/atoms";
+	import { Block, ScrollFade } from "@gradio/atoms";
 
-	export let label: string;
-	export let elem_id = "";
-	export let elem_classes: string[] = [];
-	export let visible = true;
-	export let value = "";
-	export let loading_status: LoadingStatus;
-	export let rtl = false;
-	export let sanitize_html = true;
-	export let line_breaks = false;
-	export let gradio: Gradio<{
-		change: never;
-		clear_status: LoadingStatus;
-	}>;
-	export let latex_delimiters: {
-		left: string;
-		right: string;
-		display: boolean;
-	}[];
-	export let header_links = false;
+	import type { MarkdownProps, MarkdownEvents } from "./types";
 
-	$: label, gradio.dispatch("change");
+	let props = $props();
+	const gradio = new Gradio<MarkdownEvents, MarkdownProps>(props);
+
+	let wrapper: HTMLDivElement;
+	let show_fade = $state(false);
+
+	function update_fade(): void {
+		if (!gradio.props.height) return;
+		show_fade = should_show_scroll_fade(
+			wrapper?.closest(".block") as HTMLElement | null
+		);
+	}
+
+	$effect(() => {
+		const container = wrapper?.closest(".block") as HTMLElement | null;
+		if (!container || !gradio.props.height) return;
+		container.addEventListener("scroll", update_fade);
+		tick().then(update_fade);
+		return () => container.removeEventListener("scroll", update_fade);
+	});
+
+	$effect(() => {
+		if (gradio.props.value !== undefined) tick().then(update_fade);
+	});
 </script>
 
 <Block
-	{visible}
-	{elem_id}
-	{elem_classes}
-	container={false}
+	visible={gradio.shared.visible}
+	elem_id={gradio.shared.elem_id}
+	elem_classes={gradio.shared.elem_classes}
+	container={gradio.shared.container}
 	allow_overflow={true}
+	overflow_behavior="auto"
+	height={gradio.props.height ?? undefined}
+	min_height={gradio.props.min_height ?? undefined}
+	max_height={gradio.props.max_height ?? undefined}
+	rtl={gradio.props.rtl}
 >
 	<StatusTracker
-		autoscroll={gradio.autoscroll}
+		autoscroll={gradio.shared.autoscroll}
 		i18n={gradio.i18n}
-		{...loading_status}
+		{...gradio.shared.loading_status}
 		variant="center"
-		on:clear_status={() => gradio.dispatch("clear_status", loading_status)}
+		on_clear_status={() =>
+			gradio.dispatch("clear_status", gradio.shared.loading_status)}
 	/>
-	<div class:pending={loading_status?.status === "pending"}>
+	<div
+		bind:this={wrapper}
+		class:padding={gradio.shared.padding}
+		class:pending={gradio.shared.loading_status?.status === "pending" &&
+			gradio.shared.loading_status?.show_progress !== "hidden"}
+		data-testid="markdown-wrapper"
+	>
 		<Markdown
-			min_height={loading_status && loading_status.status !== "complete"}
-			{value}
-			{elem_classes}
-			{visible}
-			{rtl}
-			on:change={() => gradio.dispatch("change")}
-			{latex_delimiters}
-			{sanitize_html}
-			{line_breaks}
-			{header_links}
+			value={gradio.props.value}
+			elem_classes={gradio.shared.elem_classes}
+			visible={gradio.shared.visible}
+			rtl={gradio.props.rtl}
+			onchange={() => gradio.dispatch("change")}
+			oncopy={(e) => gradio.dispatch("copy", e)}
+			latex_delimiters={gradio.props.latex_delimiters}
+			sanitize_html={gradio.props.sanitize_html}
+			line_breaks={gradio.props.line_breaks}
+			header_links={gradio.props.header_links}
+			show_copy_button={gradio.props.buttons?.includes("copy")}
+			loading_status={gradio.shared.loading_status}
+			theme_mode={gradio.shared.theme_mode}
 		/>
 	</div>
+	<ScrollFade visible={show_fade} />
 </Block>
 
 <style>
@@ -72,5 +92,9 @@
 
 	.pending {
 		opacity: 0.2;
+	}
+
+	.padding {
+		padding: var(--block-padding);
 	}
 </style>

@@ -20,6 +20,7 @@ class TestEvent:
 
             img.clear(fn_img_cleared, [], [])
 
+        assert "dependencies" in demo.config
         assert demo.config["dependencies"][0]["targets"][0][1] == "clear"
 
     def test_event_data(self):
@@ -36,7 +37,7 @@ class TestEvent:
         client = TestClient(app)
 
         resp = client.post(
-            f"{demo.local_url}run/predict",
+            f"{demo.local_api_url}run/predict",
             json={"fn_index": 0, "data": [], "event_data": {"index": 1, "value": None}},
         )
         assert resp.status_code == 200
@@ -66,12 +67,15 @@ class TestEvent:
             txt0.submit(lambda x: x, txt0, txt0)
             child.render()
 
+        assert "dependencies" in parent.config
         assert parent.config["dependencies"][1]["trigger_after"] is None
         assert parent.config["dependencies"][2]["trigger_after"] == 1
         assert parent.config["dependencies"][3]["trigger_after"] == 2
 
         assert not parent.config["dependencies"][2]["trigger_only_on_success"]
+        assert not parent.config["dependencies"][2]["trigger_only_on_failure"]
         assert parent.config["dependencies"][3]["trigger_only_on_success"]
+        assert not parent.config["dependencies"][3]["trigger_only_on_failure"]
 
     def test_on_listener(self):
         with gr.Blocks() as demo:
@@ -99,6 +103,7 @@ class TestEvent:
             def sum(a, b, c):
                 return a + b + c
 
+        assert "dependencies" in demo.config
         assert demo.config["dependencies"][0]["targets"] == [
             (name._id, "submit"),
             (greet_btn._id, "click"),
@@ -108,7 +113,62 @@ class TestEvent:
             (num1._id, "change"),
             (num2._id, "change"),
             (num3._id, "change"),
+            (0, "load"),
         ]
+
+    def test_js_only_event_without_explicit_fn_none(self):
+        js = "() => { alert('hi'); }"
+
+        with gr.Blocks() as demo:
+            b1 = gr.Button("explicit fn=None")
+            b2 = gr.Button("no fn")
+            b3 = gr.Button("gr.on no fn")
+
+            b1.click(js=js, fn=None)
+            b2.click(js=js)
+            gr.on(triggers=[b3.click], js=js)
+
+        dependencies = demo.config["dependencies"]
+        assert len(dependencies) == 3
+        for button in (b1, b2, b3):
+            deps = [
+                dep
+                for dep in dependencies
+                if (button._id, "click") in [tuple(t) for t in dep["targets"]]
+            ]
+            assert len(deps) == 1
+            assert deps[0]["js"] == js
+            assert demo.fns[deps[0]["id"]].fn is None
+
+    def test_decorator_with_js_registers_single_event(self):
+        js = "() => { alert('hi'); }"
+
+        with gr.Blocks() as demo:
+            textbox = gr.Textbox()
+            button = gr.Button("decorated")
+            on_button = gr.Button("gr.on decorated")
+
+            @button.click(inputs=textbox, outputs=textbox, js=js)
+            def greet(value):
+                return value + "!"
+
+            @gr.on(triggers=[on_button.click], inputs=textbox, outputs=textbox, js=js)
+            def on_greet(value):
+                return value + "?"
+
+        dependencies = demo.config["dependencies"]
+        assert len(dependencies) == 2
+        for component in (button, on_button):
+            deps = [
+                dep
+                for dep in dependencies
+                if (component._id, "click") in [tuple(t) for t in dep["targets"]]
+            ]
+            assert len(deps) == 1
+            assert deps[0]["js"] == js
+            assert demo.fns[deps[0]["id"]].fn is not None
+        assert greet("a") == "a!"
+        assert on_greet("a") == "a?"
 
     def test_load_chaining(self):
         calls = 0
@@ -124,6 +184,7 @@ class TestEvent:
                 increment, inputs=None, outputs=out
             )
 
+        assert "dependencies" in demo.config
         assert demo.config["dependencies"][0]["targets"][0][1] == "load"
         assert demo.config["dependencies"][0]["trigger_after"] is None
         assert demo.config["dependencies"][1]["targets"][0][1] == "then"
@@ -145,7 +206,7 @@ class TestEvent:
 
         with gr.Blocks() as demo2:
             demo.render()
-
+        assert "dependencies" in demo2.config
         assert demo2.config["dependencies"][0]["targets"][0][1] == "load"
         assert demo2.config["dependencies"][0]["trigger_after"] is None
         assert demo2.config["dependencies"][1]["targets"][0][1] == "then"
@@ -180,6 +241,21 @@ def test_event_pyi_file_matches_source_code():
     assert segment
     sig = inspect.signature(gr.Button.click)
     for param in sig.parameters.values():
-        if param.name == "block":
+        if param.name in ["block", "time_limit", "stream_every", "like_user_message"]:
             continue
         assert param.name in segment
+
+    code = (
+        Path(__file__).parent / ".." / "gradio" / "components" / "image.pyi"
+    ).read_text()
+    mod = ast.parse(code)
+    segment = None
+    for node in ast.walk(mod):
+        if isinstance(node, ast.FunctionDef) and node.name == "stream":
+            segment = ast.get_source_segment(code, node)
+
+    # This would fail if Image no longer has a stream method
+    assert segment
+    sig = inspect.signature(gr.Image.stream)
+    for param in ["time_limit", "stream_every"]:
+        assert param in segment

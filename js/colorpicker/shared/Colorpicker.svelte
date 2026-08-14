@@ -1,45 +1,482 @@
 <script lang="ts">
-	import { createEventDispatcher, afterUpdate } from "svelte";
+	import { onMount, tick } from "svelte";
+	import tinycolor from "tinycolor2";
 	import { BlockTitle } from "@gradio/atoms";
+	import { click_outside } from "./events";
+	import { Eyedropper } from "@gradio/icons";
+	import { hsva_to_rgba, format_color, normalize_color } from "./utils";
 
-	export let value = "#000000";
-	export let value_is_output = false;
-	export let label: string;
-	export let info: string | undefined = undefined;
-	export let disabled = false;
-	export let show_label = true;
+	let {
+		value = $bindable(),
+		label,
+		info,
+		disabled,
+		show_label,
+		on_input = () => {},
+		on_release = () => {},
+		on_submit = () => {},
+		on_blur = () => {},
+		on_focus = () => {}
+	}: {
+		value: string;
+		label: string;
+		info?: string;
+		disabled: boolean;
+		show_label: boolean;
+		on_input?: () => void;
+		on_release?: () => void;
+		on_submit?: () => void;
+		on_blur?: () => void;
+		on_focus?: () => void;
+	} = $props();
 
-	const dispatch = createEventDispatcher<{
-		change: string;
-		input: undefined;
-		submit: undefined;
-		blur: undefined;
-		focus: undefined;
-	}>();
+	let dialog_open = $state(false);
+	let current_mode: "hex" | "rgb" | "hsl" = $state("hex");
 
-	function handle_change(): void {
-		dispatch("change", value);
-		if (!value_is_output) {
-			dispatch("input");
+	let eyedropper_supported = false;
+
+	let wrapper: HTMLDivElement;
+	let dialog_button: HTMLButtonElement;
+	let has_focus = false;
+
+	let sl_wrap: HTMLDivElement;
+	let hue_wrap: HTMLDivElement;
+
+	let sl_marker_pos = [0, 0];
+	let sl_rect: DOMRect | null = null;
+	let sl_moving = false;
+	let sl = [0, 0];
+
+	let hue = 0;
+	let hue_marker_pos = 0;
+	let hue_rect: DOMRect | null = null;
+	let hue_moving = false;
+
+	function handle_hue_down(
+		event: MouseEvent & { currentTarget: HTMLDivElement }
+	): void {
+		hue_rect = event.currentTarget.getBoundingClientRect();
+		hue_moving = true;
+		update_hue_from_mouse(event.clientX);
+	}
+
+	function update_hue_from_mouse(x: number): void {
+		if (!hue_rect) return;
+		const _x = Math.max(0, Math.min(x - hue_rect.left, hue_rect.width)); // Get the x-coordinate relative to the box
+		hue_marker_pos = _x;
+		const _hue = (_x / hue_rect.width) * 360; // Scale the x position to a hue value (0-360)
+
+		hue = _hue;
+
+		value = hsva_to_rgba({ h: _hue, s: sl[0], v: sl[1], a: 1 });
+		on_input();
+	}
+
+	function update_color_from_mouse(x: number, y: number): void {
+		if (!sl_rect) return;
+		const _x = Math.max(0, Math.min(x - sl_rect.left, sl_rect.width));
+		const _y = Math.max(0, Math.min(y - sl_rect.top, sl_rect.height));
+		sl_marker_pos = [_x, _y];
+		const _hsva = {
+			h: hue * 1,
+			s: _x / sl_rect.width,
+			v: 1 - _y / sl_rect.height,
+			a: 1
+		};
+
+		sl = [_hsva.s, _hsva.v];
+
+		value = hsva_to_rgba(_hsva);
+		on_input();
+	}
+
+	function handle_sl_down(
+		event: MouseEvent & { currentTarget: HTMLDivElement }
+	): void {
+		sl_moving = true;
+		sl_rect = event.currentTarget.getBoundingClientRect();
+		update_color_from_mouse(event.clientX, event.clientY);
+	}
+
+	function handle_move(event: MouseEvent): void {
+		if (sl_moving) update_color_from_mouse(event.clientX, event.clientY);
+		if (hue_moving) update_hue_from_mouse(event.clientX);
+	}
+
+	function handle_end(): void {
+		const should_dispatch_release = sl_moving || hue_moving;
+		sl_moving = false;
+		hue_moving = false;
+		if (should_dispatch_release) {
+			on_release();
 		}
 	}
 
-	afterUpdate(() => {
-		value_is_output = false;
+	async function update_mouse_from_color(color: string): Promise<void> {
+		if (sl_moving || hue_moving) return;
+		await tick();
+		if (!color) return;
+
+		if (!sl_rect && sl_wrap) {
+			sl_rect = sl_wrap.getBoundingClientRect();
+		}
+
+		if (!hue_rect && hue_wrap) {
+			hue_rect = hue_wrap.getBoundingClientRect();
+		}
+
+		// Exit if we still don't have valid rectangles
+		if (!sl_rect || !hue_rect) return;
+
+		const hsva = tinycolor(color).toHsv();
+		const _x = hsva.s * sl_rect.width;
+		const _y = (1 - hsva.v) * sl_rect.height;
+		sl_marker_pos = [_x, _y];
+		sl = [hsva.s, hsva.v];
+		hue = hsva.h;
+		hue_marker_pos = (hsva.h / 360) * hue_rect.width;
+	}
+
+	function request_eyedropper(): void {
+		// @ts-ignore
+		const eyeDropper = new EyeDropper();
+
+		eyeDropper.open().then((result: { sRGBHex: string }) => {
+			value = result.sRGBHex;
+		});
+		on_input();
+	}
+
+	const modes = [
+		["Hex", "hex"],
+		["RGB", "rgb"],
+		["HSL", "hsl"]
+	] as const;
+
+	let color_string = $derived.by(() => format_color(value, current_mode));
+
+	onMount(async () => {
+		// @ts-ignore
+		eyedropper_supported = window !== undefined && !!window.EyeDropper;
 	});
-	$: value, handle_change();
+
+	function handle_focusin(): void {
+		if (!has_focus) {
+			has_focus = true;
+			on_focus();
+		}
+	}
+
+	function handle_focusout(event: FocusEvent): void {
+		if (event.relatedTarget && wrapper.contains(event.relatedTarget as Node)) {
+			return;
+		}
+		if (has_focus) {
+			has_focus = false;
+			on_blur();
+		}
+	}
+
+	function handle_click_outside(event: MouseEvent): void {
+		// click_outside is bound to the dialog, so the swatch (outside it, but
+		// inside the component) triggers this too; let its onclick handle the toggle.
+		if (dialog_button.contains(event.target as Node)) {
+			return;
+		}
+		dialog_open = false;
+		// The focused element is removed with the dialog, so no focusout fires;
+		// dispatch blur here instead.
+		if (has_focus) {
+			has_focus = false;
+			on_blur();
+		}
+	}
+
+	$effect(() => {
+		update_mouse_from_color(value);
+	});
 </script>
 
-<label class="block">
-	<BlockTitle {show_label} {info}>{label}</BlockTitle>
-	<input type="color" bind:value on:focus on:blur {disabled} />
-</label>
+<BlockTitle {show_label} {info}>{label}</BlockTitle>
+
+<svelte:window onmousemove={handle_move} onmouseup={handle_end} />
+
+<div
+	bind:this={wrapper}
+	onfocusin={handle_focusin}
+	onfocusout={handle_focusout}
+>
+	<button
+		class="dialog-button"
+		bind:this={dialog_button}
+		aria-label={label}
+		style:background={value}
+		{disabled}
+		onclick={() => {
+			update_mouse_from_color(value);
+			dialog_open = !dialog_open;
+		}}
+	/>
+
+	{#if dialog_open}
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+		<div
+			class="color-picker"
+			onmousedown={(e) => {
+				// Keep focus where it is, as Dropdown does for its options:
+				// letting focus fall to body (padding clicks, or button clicks
+				// on browsers where buttons don't take focus) fires a premature
+				// blur. Only the text input needs mouse focus.
+				if (!(e.target instanceof HTMLInputElement)) {
+					e.preventDefault();
+				}
+			}}
+			use:click_outside={handle_click_outside}
+		>
+			<div
+				class="color-gradient"
+				role="slider"
+				aria-label="Saturation and brightness"
+				aria-valuetext={value}
+				tabindex="0"
+				onmousedown={handle_sl_down}
+				style="--hue:{hue}"
+				bind:this={sl_wrap}
+			>
+				<div
+					class="marker"
+					style:transform="translate({sl_marker_pos[0]}px,{sl_marker_pos[1]}px)"
+					style:background={value}
+				/>
+			</div>
+			<div
+				class="hue-slider"
+				role="slider"
+				aria-label="Hue"
+				aria-valuemin={0}
+				aria-valuemax={360}
+				aria-valuenow={Math.round(hue)}
+				tabindex="0"
+				onmousedown={handle_hue_down}
+				bind:this={hue_wrap}
+			>
+				<div
+					class="marker"
+					style:background={"hsl(" + hue + ", 100%, 50%)"}
+					style:transform="translateX({hue_marker_pos}px)"
+				/>
+			</div>
+
+			<div class="input">
+				<button class="swatch" style:background={value}></button>
+				<div>
+					<div class="input-wrap">
+						<input
+							type="text"
+							bind:value={color_string}
+							onchange={(e) => {
+								value = normalize_color(e.currentTarget.value);
+							}}
+							onkeydown={(e) => {
+								if (e.key === "Enter") {
+									on_submit();
+								}
+							}}
+						/>
+						<button class="eyedropper" onclick={request_eyedropper}>
+							{#if eyedropper_supported}
+								<Eyedropper />
+							{/if}
+						</button>
+					</div>
+
+					<div class="buttons">
+						{#each modes as [label, value]}
+							<button
+								class="button"
+								class:active={current_mode === value}
+								onclick={() => {
+									current_mode = value;
+								}}>{label}</button
+							>
+						{/each}
+					</div>
+				</div>
+			</div>
+		</div>
+	{/if}
+</div>
 
 <style>
-	input {
+	.dialog-button {
 		display: block;
+		width: var(--size-10);
+		height: var(--size-5);
+		border: var(--block-border-width) solid var(--block-border-color);
+	}
+
+	.dialog-button:disabled {
+		cursor: not-allowed;
+	}
+
+	.input {
+		display: flex;
+		align-items: center;
+		padding: 0 10px 15px;
+	}
+
+	.input input {
+		height: 30px;
+		width: 100%;
+		flex-shrink: 1;
+		border-bottom-left-radius: 0;
+		border: 1px solid var(--block-border-color);
+		letter-spacing: -0.05rem;
+		border-left: none;
+		border-right: none;
+		font-family: var(--font-mono);
+		font-size: var(--scale-000);
+		padding-left: 15px;
+		padding-right: 0;
+		background-color: var(--background-fill-secondary);
+		color: var(--block-label-text-color);
+	}
+
+	.swatch {
+		width: 50px;
+		height: 50px;
+		border-top-left-radius: 15px;
+		border-bottom-left-radius: 15px;
+		flex-shrink: 0;
+		border: 1px solid var(--block-border-color);
+	}
+
+	.color-picker {
+		width: 230px;
+		background: var(--background-fill-secondary);
+		border: 1px solid var(--block-border-color);
+		border-radius: var(--block-radius);
+		margin: var(--spacing-sm) 0;
+	}
+
+	.buttons {
+		height: 20px;
+		display: flex;
+		justify-content: stretch;
+		gap: 0px;
+	}
+
+	.buttons button {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: 1px solid var(--block-border-color);
+		background: var(--background-fill-secondary);
+		padding: 3px 6px;
+		font-size: var(--scale-000);
+		cursor: pointer;
+		border-right: none;
+		width: 100%;
+		border-top: none;
+	}
+
+	.buttons button:first-child {
+		border-left: none;
+	}
+
+	.buttons button:last-child {
+		border-bottom-right-radius: 15px;
+		border-right: 1px solid var(--block-border-color);
+	}
+
+	.buttons button:hover {
+		background: var(--background-fill-secondary-hover);
+		font-weight: var(--weight-bold);
+	}
+
+	.buttons button.active {
+		background: var(--background-fill-secondary);
+		font-weight: var(--weight-bold);
+	}
+
+	.input-wrap {
+		display: flex;
+	}
+
+	.color-gradient {
 		position: relative;
-		background: var(--background-fill-primary);
-		line-height: var(--line-sm);
+		--hue: white;
+		background:
+			linear-gradient(rgba(0, 0, 0, 0), #000),
+			linear-gradient(90deg, #fff, hsl(var(--hue), 100%, 50%));
+		width: 100%;
+		height: 150px;
+		border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+	}
+
+	.hue-slider {
+		position: relative;
+		width: 90%;
+		margin: 10px auto;
+		height: 10px;
+		border-radius: 5px;
+		background: linear-gradient(
+			to right,
+			hsl(0, 100%, 50%) 0%,
+			#ff0 17%,
+			lime 33%,
+			cyan 50%,
+			blue 67%,
+			magenta 83%,
+			red 100%
+		);
+	}
+
+	.swatch {
+		width: 50px;
+		height: 50px;
+		border-top-left-radius: 15px;
+		border-bottom-left-radius: 15px;
+		flex-shrink: 0;
+		border: 1px solid var(--block-border-color);
+	}
+
+	.eyedropper {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 25px;
+		height: 30px;
+		border-top-right-radius: 15px;
+		border: 1px solid var(--block-border-color);
+		border-left: none;
+		background: var(--background-fill-secondary);
+		height: 30px;
+		padding: 7px 7px 5px 0px;
+		cursor: pointer;
+	}
+
+	.marker {
+		position: absolute;
+		width: 14px;
+		height: 14px;
+		border-radius: 50%;
+		border: 2px solid white;
+		top: -2px;
+		left: -7px;
+		box-shadow: 0 1px 5px rgba(0, 0, 0, 0.1);
+		pointer-events: none;
+	}
+
+	input {
+		width: 100%;
+		height: 30px;
+		border: 1px solid var(--block-border-color);
+		border-radius: var(--radius-sm);
+		padding: 0 var(--size-2);
+		font-family: var(--font-mono);
+		font-size: var(--scale-000);
+		color: var(--block-label-text-color);
+		background-color: var(--background-fill-primary);
 	}
 </style>

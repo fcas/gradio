@@ -8,19 +8,18 @@ with gr.Blocks() as demo:
     clear = gr.Button("Clear")
 
     def user(user_message, history):
-        return "", history + [[user_message, None]]
+        return "", history + [{"role": "user", "content": user_message}]
 
     def bot(history):
         bot_message = random.choice(["How are you?", "I love you", "I'm very hungry"])
         time.sleep(2)
-        history[-1][1] = bot_message
+        history.append({"role": "assistant", "content": bot_message})
         return history
 
     msg.submit(user, [msg, chatbot], [msg, chatbot], queue=False).then(
         bot, chatbot, chatbot
     )
     clear.click(lambda: None, None, chatbot, queue=False)
-    
-demo.queue()
+
 if __name__ == "__main__":
     demo.launch()

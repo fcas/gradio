@@ -4,12 +4,11 @@ import importlib
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import Annotated
 
 import semantic_version
 import typer
 from tomlkit import dump, parse
-from typing_extensions import Annotated
 
 import gradio
 from gradio.analytics import custom_component_analytics
@@ -17,10 +16,13 @@ from gradio.cli.commands.components._docs_utils import (
     get_deep,
 )
 from gradio.cli.commands.components.docs import run_command
-from gradio.cli.commands.components.install_component import _get_executable_path
+from gradio.cli.commands.components.install_component import (
+    _get_executable_path,
+    _get_frontend_dir,
+)
 from gradio.cli.commands.display import LivePanelDisplay
 
-gradio_template_path = Path(gradio.__file__).parent / "templates" / "frontend"
+gradio_template_path = Path(gradio.__file__).parent / "templates" / "frontend"  # type: ignore
 
 
 def _build(
@@ -37,7 +39,7 @@ def _build(
         bool, typer.Option(help="Whether to generate the documentation as well.")
     ] = True,
     python_path: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             help="Path to python executable. If None, will use the default path found by `which python3`. If python3 is not found, `which python` will be tried. If both fail an error will be raised."
         ),
@@ -64,7 +66,7 @@ def _build(
         package_name = get_deep(pyproject_toml, ["project", "name"])
 
         python_path = _get_executable_path(
-            "python", None, "--python-path", check_3=True
+            "python", python_path, "--python-path", check_3=True
         )
 
         if not isinstance(package_name, str):
@@ -76,7 +78,7 @@ def _build(
         except ModuleNotFoundError as e:
             raise ValueError(
                 f"Your custom component package ({package_name}) is not installed! "
-                "Please install it with the gradio cc install command before buillding it."
+                "Please install it with the gradio cc install command before building it."
             ) from e
         if bump_version:
             pyproject_toml = parse((path / "pyproject.toml").read_text())
@@ -88,7 +90,7 @@ def _build(
                 "Set [bold][magenta]--no-bump-version[/][/] to use the version in pyproject.toml file."
             )
             pyproject_toml["project"]["version"] = str(version)  # type: ignore
-            with open(path / "pyproject.toml", "w") as f:
+            with open(path / "pyproject.toml", "w", encoding="utf-8") as f:
                 dump(pyproject_toml, f)
         else:
             version = pyproject_toml["project"]["version"]  # type: ignore
@@ -129,16 +131,18 @@ def _build(
                     "node must be installed in order to run build command."
                 )
 
+            frontend_dir = _get_frontend_dir(component_directory)
+
             gradio_node_path = subprocess.run(
                 [node, "-e", "console.log(require.resolve('@gradio/preview'))"],
-                cwd=Path(component_directory / "frontend"),
+                cwd=frontend_dir,
                 check=False,
                 capture_output=True,
             )
 
             if gradio_node_path.returncode != 0:
                 raise ValueError(
-                    "Could not find `@gradio/preview`. Run `npm i -D @gradio/preview` in your frontend folder."
+                    f"Could not find `@gradio/preview`. Run `npm i -D @gradio/preview` in your frontend folder ({frontend_dir})."
                 )
 
             gradio_node_path = gradio_node_path.stdout.decode("utf-8").strip()
@@ -162,7 +166,7 @@ def _build(
                 live.update(":red_square: Build failed!")
                 live.update(pipe.stderr)
                 live.update(pipe.stdout)
-                return
+                raise SystemExit("Frontend build failed")
             else:
                 live.update(":white_check_mark: Build succeeded!")
 
@@ -172,6 +176,7 @@ def _build(
         if pipe.returncode != 0:
             live.update(":red_square: Build failed!")
             live.update(pipe.stderr)
+            raise SystemExit("Python build failed")
         else:
             live.update(":white_check_mark: Build succeeded!")
             live.update(

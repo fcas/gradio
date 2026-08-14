@@ -1,7 +1,8 @@
-import json
-import os
+from __future__ import annotations
+
 import pathlib
 import tempfile
+import threading
 import time
 import uuid
 from concurrent.futures import CancelledError, TimeoutError, wait
@@ -14,15 +15,11 @@ import gradio as gr
 import httpx
 import huggingface_hub
 import pytest
-import uvicorn
-from fastapi import FastAPI
-from gradio.http_server import Server
-from huggingface_hub import HfFolder
 from huggingface_hub.utils import RepositoryNotFoundError
 
-from gradio_client import Client, file
+from gradio_client import Client, handle_file
 from gradio_client.client import DEFAULT_TEMP_DIR
-from gradio_client.exceptions import AppError, AuthenticationError
+from gradio_client.exceptions import AuthenticationError
 from gradio_client.utils import (
     Communicator,
     ProgressUnit,
@@ -31,48 +28,56 @@ from gradio_client.utils import (
     StatusUpdate,
 )
 
-HF_TOKEN = os.getenv("HF_TOKEN") or HfFolder.get_token()
+HF_TOKEN = huggingface_hub.get_token()
 
 
 @contextmanager
 def connect(
     demo: gr.Blocks,
-    serialize: bool = True,
-    output_dir: str = DEFAULT_TEMP_DIR,
+    download_files: str = DEFAULT_TEMP_DIR,
+    client_kwargs: dict | None = None,
     **kwargs,
 ):
     _, local_url, _ = demo.launch(prevent_thread_lock=True, **kwargs)
+    if client_kwargs is None:
+        client_kwargs = {}
     try:
-        yield Client(local_url, serialize=serialize, output_dir=output_dir)
+        yield Client(local_url, download_files=download_files, **client_kwargs)
     finally:
-        # A more verbose version of .close()
-        # because we should set a timeout
-        # the tests that call .cancel() can get stuck
-        # waiting for the thread to join
+        # A more verbose version of .close() because we should set a timeout
+        # the tests that call .cancel() can get stuck waiting for the thread to join
         demo.close()
 
 
 class TestClientInitialization:
-    @pytest.mark.flaky
-    def test_headers_constructed_correctly(self):
-        client = Client("gradio-tests/titanic-survival", hf_token=HF_TOKEN)
-        assert {"authorization": f"Bearer {HF_TOKEN}"}.items() <= client.headers.items()
-        client = Client(
-            "gradio-tests/titanic-survival",
-            hf_token=HF_TOKEN,
-            headers={"additional": "value"},
-        )
-        assert {
-            "authorization": f"Bearer {HF_TOKEN}",
-            "additional": "value",
-        }.items() <= client.headers.items()
-        client = Client(
-            "gradio-tests/titanic-survival",
-            hf_token=HF_TOKEN,
-            headers={"authorization": "Bearer abcde"},
-        )
-        assert {"authorization": "Bearer abcde"}.items() <= client.headers.items()
+    def test_headers_constructed_correctly(self, increment_demo):
+        if not HF_TOKEN:
+            pytest.skip("HF_TOKEN is not set, skipping test")
+        _, local_url, _ = increment_demo.launch(prevent_thread_lock=True)
+        try:
+            client = Client(local_url, token=HF_TOKEN)
+            assert {
+                "x-hf-authorization": f"Bearer {HF_TOKEN}"
+            }.items() <= client.headers.items()
+            client = Client(
+                local_url,
+                token=HF_TOKEN,
+                headers={"additional": "value"},
+            )
+            assert {
+                "x-hf-authorization": f"Bearer {HF_TOKEN}",
+                "additional": "value",
+            }.items() <= client.headers.items()
+            client = Client(
+                local_url,
+                token=HF_TOKEN,
+                headers={"authorization": "Bearer abcde"},
+            )
+            assert {"authorization": "Bearer abcde"}.items() <= client.headers.items()
+        finally:
+            increment_demo.close()
 
+    @pytest.mark.serial
     def test_many_endpoint_demo_loads_quickly(self, many_endpoint_demo):
         import datetime
 
@@ -80,6 +85,50 @@ class TestClientInitialization:
         with connect(many_endpoint_demo):
             pass
         assert (datetime.datetime.now() - start).seconds < 5
+
+    @pytest.mark.parametrize(
+        "cookies,expected",
+        [
+            (None, {}),  # Falsy values coherced to empty dict
+            ({}, {}),  # Empty does not make any difference
+            ({"test-cookie": "abc"}, {"test-cookie": "abc"}),  # Well-formed cookies
+        ],
+    )
+    def test_httpx_cookies_kwarg_is_used_by_client(
+        self, cookies, expected, monkeypatch
+    ):
+        monkeypatch.setattr(threading, "Thread", lambda *_, **__: MagicMock())
+        monkeypatch.setattr(Client, "_space_name_to_src", lambda _, src: src)
+        monkeypatch.setattr(
+            Client, "_get_space_state", lambda _: huggingface_hub.SpaceStage.RUNNING
+        )
+
+        with patch("httpx.get") as mocked:
+            mocked.return_value = httpx.Response(
+                200,
+                json={
+                    "version": "3.36.2",  # Force recent version branch
+                    "dependencies": [],
+                    "named_endpoints": {},
+                    "unnamed_endpoints": {},
+                },
+                request=httpx.Request("GET", "https://fake/space"),
+            )
+            client = Client("fake/space", httpx_kwargs={"cookies": cookies})
+            for call in mocked.call_args_list:
+                assert call.kwargs["cookies"] == expected, (
+                    "Client instantiation missing cookies"
+                )
+
+        # _login overrides cookies
+        response = httpx.Response(200)
+        response._cookies = httpx.Cookies(cookies)
+        with patch("httpx.post", return_value=response) as mocked:
+            client._login(("user", "pass"))
+            mocked.assert_called_once()
+            call = mocked.call_args
+            assert "cookies" not in call.kwargs, "_login call incorporate cookies"
+            assert client.cookies == expected, "_login does not set client cookies"
 
 
 class TestClientPredictions:
@@ -92,55 +141,26 @@ class TestClientPredictions:
         with connect(max_file_size_demo, max_file_size="15kb") as client:
             with pytest.raises(ValueError, match="exceeds the maximum file size"):
                 client.predict(
-                    file(Path(__file__).parent / "files" / "cheetah1.jpg"),
+                    handle_file(
+                        Path(__file__).parents[3]
+                        / "gradio"
+                        / "media_assets"
+                        / "images"
+                        / "cheetah1.jpg"
+                    ),
                     api_name="/upload_1b",
                 )
             client.predict(
-                file(Path(__file__).parent / "files" / "alphabet.txt"),
+                handle_file(Path(__file__).parent / "files" / "alphabet.txt"),
                 api_name="/upload_1b",
             )
-
-    @pytest.mark.flaky
-    def test_numerical_to_label_space(self):
-        client = Client("gradio-tests/titanic-survival")
-        label = json.load(
-            open(client.predict("male", 77, 10, api_name="/predict"))  # noqa: SIM115
-        )
-        assert label["label"] == "Perishes"
-        with pytest.raises(
-            ValueError,
-            match="This Gradio app might have multiple endpoints. Please specify an `api_name` or `fn_index`",
-        ):
-            client.predict("male", 77, 10)
-        with pytest.raises(
-            ValueError,
-            match="Cannot find a function with `api_name`: predict. Did you mean to use a leading slash?",
-        ):
-            client.predict("male", 77, 10, api_name="predict")
-
-    @pytest.mark.flaky
-    def test_numerical_to_label_space_v4(self):
-        client = Client("gradio-tests/titanic-survivalv4-sse")
-        label = client.predict("male", 77, 10, api_name="/predict")
-        assert label["label"] == "Perishes"
 
     @pytest.mark.flaky
     def test_private_space(self):
         space_id = "gradio-tests/not-actually-private-space"
         api = huggingface_hub.HfApi()
         assert api.space_info(space_id).private
-        client = Client(space_id)
-        output = client.predict("abc", api_name="/predict")
-        assert output == "abc"
-
-    @pytest.mark.flaky
-    def test_private_space_v4(self):
-        space_id = "gradio-tests/not-actually-private-spacev4-sse"
-        api = huggingface_hub.HfApi()
-        assert api.space_info(space_id).private
-        client = Client(
-            space_id,
-        )
+        client = Client(space_id, token=HF_TOKEN)
         output = client.predict("abc", api_name="/predict")
         assert output == "abc"
 
@@ -151,6 +171,7 @@ class TestClientPredictions:
         assert api.space_info(space_id).private
         client = Client(
             space_id,
+            token=HF_TOKEN,
         )
         output = client.predict("abc", api_name="/predict")
         assert output == "abc"
@@ -160,22 +181,25 @@ class TestClientPredictions:
         space_id = "gradio-tests/space_with_files_v4_sse_v2"
         client = Client(space_id)
         payload = (
-            "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
+            handle_file(
+                "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3"
+            ),
             {
-                "video": "https://github.com/gradio-app/gradio/raw/main/demo/video_component/files/world.mp4",
+                "video": handle_file(
+                    "https://github.com/gradio-app/gradio/raw/main/demo/video_component/files/world.mp4"
+                ),
                 "subtitle": None,
             },
-            "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
+            handle_file(
+                "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3"
+            ),
         )
         output = client.predict(*payload, api_name="/predict")
         assert output[0].endswith(".wav")  # Audio files are converted to wav
         assert output[1]["video"].endswith(
             "world.mp4"
         )  # Video files are not converted by default
-        assert (
-            output[2]
-            == "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3"
-        )  # textbox string should remain exactly the same
+        assert "sample-0.mp3" in output[2]
 
     def test_state(self, increment_demo):
         with connect(increment_demo) as client:
@@ -254,43 +278,30 @@ class TestClientPredictions:
                 job = client.submit("foo", "add", 9, fn_index=0)
                 job.result()
 
-    def test_raises_exception_no_queue(self, sentiment_classification_demo):
-        with pytest.raises(Exception):
-            with connect(sentiment_classification_demo) as client:
-                job = client.submit([5], api_name="/sleep")
-                job.result()
-
+    @pytest.mark.flaky
     def test_job_output_video(self, video_component):
         with connect(video_component) as client:
             job = client.submit(
-                {
-                    "video": file(
-                        "https://huggingface.co/spaces/gradio/video_component/resolve/main/files/a.mp4"
-                    )
-                },
-                fn_index=0,
+                handle_file(
+                    "https://huggingface.co/datasets/freddyaboulton/bucket/resolve/main/ProgressNotifications.mp4"
+                ),
+                api_name="/predict",
             )
-            assert Path(job.result()["video"]).exists()
+            assert Path(job.result()).exists()
             assert (
-                Path(DEFAULT_TEMP_DIR).resolve()
-                in Path(job.result()["video"]).resolve().parents
+                Path(DEFAULT_TEMP_DIR).resolve() in Path(job.result()).resolve().parents
             )
 
         temp_dir = tempfile.mkdtemp()
-        with connect(video_component, output_dir=temp_dir) as client:
+        with connect(video_component, download_files=temp_dir) as client:
             job = client.submit(
-                {
-                    "video": file(
-                        "https://huggingface.co/spaces/gradio/video_component/resolve/main/files/a.mp4"
-                    )
-                },
+                handle_file(
+                    "https://huggingface.co/spaces/gradio/video_component/resolve/main/files/a.mp4"
+                ),
                 fn_index=0,
             )
-            assert Path(job.result()["video"]).exists()
-            assert (
-                Path(temp_dir).resolve()
-                in Path(job.result()["video"]).resolve().parents
-            )
+            assert Path(job.result()).exists()
+            assert Path(temp_dir).resolve() in Path(job.result()).resolve().parents
 
     def test_progress_updates(self, progress_demo):
         with connect(progress_demo) as client:
@@ -313,7 +324,7 @@ class TestClientPredictions:
             assert count
 
     def test_upload_and_download_with_auth(self):
-        demo = gr.Interface(lambda x: x, "text", "text")
+        demo = gr.Interface(lambda x: x, "text", "text", api_name="predict")
         _, url, _ = demo.launch(auth=("user", "pass"), prevent_thread_lock=True)
         with pytest.raises(AuthenticationError):
             client = Client(url)
@@ -324,7 +335,28 @@ class TestClientPredictions:
         with open(output) as f:
             assert f.read() == "Hello file!"
 
-    @pytest.mark.flaky
+    def test_upload_preserves_orig_name(self):
+        demo = gr.Interface(lambda x: x, "image", "text", api_name="predict")
+        with connect(demo) as client:
+            test_file = (
+                Path(__file__).parent.parent.parent.parent
+                / "gradio"
+                / "media_assets"
+                / "images"
+                / "cheetah1.jpg"
+            )
+            output = client.endpoints[0]._upload_file({"path": test_file}, data_index=0)
+            assert output["orig_name"] == "cheetah1.jpg"
+
+            output = client.endpoints[0]._upload_file(
+                {
+                    "path": "https://raw.githubusercontent.com/gradio-app/gradio/main/test/test_files/bus.png"
+                },
+                data_index=0,
+            )
+            assert output["orig_name"] == "bus.png"
+
+    @pytest.mark.flaky(reruns=5)
     def test_cancel_from_client_queued(self, cancel_from_client_demo):
         with connect(cancel_from_client_demo) as client:
             start = time.time()
@@ -351,7 +383,7 @@ class TestClientPredictions:
                         break
                     time.sleep(0.5)
             # Result for iterative jobs will raise there is an exception
-            with pytest.raises(CancelledError):
+            with pytest.raises(Exception):
                 job.result()
             # The whole prediction takes 10 seconds to run
             # and does not iterate. So this tests that we can cancel
@@ -411,182 +443,36 @@ class TestClientPredictions:
             assert job2.status().code == Status.FINISHED
             assert len(job2.outputs()) == 4
 
-    @pytest.mark.xfail
-    def test_stream_audio(self, stream_audio):
-        with connect(stream_audio) as client:
-            job1 = client.submit(
-                file("https://gradio-builds.s3.amazonaws.com/demo-files/bark_demo.mp4"),
-                api_name="/predict",
-            )
-            assert Path(job1.result()).exists()
-
-            job2 = client.submit(
-                file(
-                    "https://gradio-builds.s3.amazonaws.com/demo-files/audio_sample.wav"
-                ),
-                api_name="/predict",
-            )
-            assert Path(job2.result()).exists()
-            assert all(Path(p).exists() for p in job2.outputs())
-
-    @pytest.mark.xfail
-    def test_upload_file_private_space_v4(self):
-        client = Client(
-            src="gradio-tests/not-actually-private-file-uploadv4-sse",
-        )
-
-        with patch.object(
-            client.endpoints[0], "_upload", wraps=client.endpoints[0]._upload
-        ) as upload:
-            with patch.object(
-                client.endpoints[0], "serialize", wraps=client.endpoints[0].serialize
-            ) as serialize:
-                with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-                    f.write("Hello from private space!")
-
-                output = client.submit(
-                    1, "foo", f.name, api_name="/file_upload"
-                ).result()
-            with open(output) as f:
-                assert f.read() == "Hello from private space!"
-            upload.assert_called_once()
-            assert all(f["is_file"] for f in serialize.return_value())
-
-        with patch.object(
-            client.endpoints[1], "_upload", wraps=client.endpoints[0]._upload
-        ) as upload:
-            with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-                f.write("Hello from private space!")
-
-            with open(client.submit(f.name, api_name="/upload_btn").result()) as f:
-                assert f.read() == "Hello from private space!"
-            upload.assert_called_once()
-
-        with patch.object(
-            client.endpoints[2], "_upload", wraps=client.endpoints[0]._upload
-        ) as upload:
-            # `delete=False` is required for Windows compat
-            with tempfile.NamedTemporaryFile(mode="w", delete=False) as f1:
-                with tempfile.NamedTemporaryFile(mode="w", delete=False) as f2:
-                    f1.write("File1")
-                    f2.write("File2")
-            r1, r2 = client.submit(
-                3,
-                [f1.name, f2.name],
-                "hello",
-                api_name="/upload_multiple",
-            ).result()
-            with open(r1) as f:
-                assert f.read() == "File1"
-            with open(r2) as f:
-                assert f.read() == "File2"
-            upload.assert_called_once()
-
-    @pytest.mark.flaky
-    def test_upload_file_private_space(self):
-        client = Client(
-            src="gradio-tests/not-actually-private-file-upload",
-            hf_token=HF_TOKEN,
-        )
-
-        with patch.object(
-            client.endpoints[0], "serialize", wraps=client.endpoints[0].serialize
-        ) as serialize:
-            with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-                f.write("Hello from private space!")
-
-            output = client.submit(1, "foo", f.name, api_name="/file_upload").result()
-        with open(output) as f:
-            assert f.read() == "Hello from private space!"
-        assert all(f["is_file"] for f in serialize.return_value())
-
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-            f.write("Hello from private space!")
-
-        with open(client.submit(f.name, api_name="/upload_btn").result()) as f:
-            assert f.read() == "Hello from private space!"
-
-        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f1:
-            with tempfile.NamedTemporaryFile(mode="w", delete=False) as f2:
-                f1.write("File1")
-                f2.write("File2")
-        r1, r2 = client.submit(
-            3,
-            [f1.name, f2.name],
-            "hello",
-            api_name="/upload_multiple",
-        ).result()
-        with open(r1) as f:
-            assert f.read() == "File1"
-        with open(r2) as f:
-            assert f.read() == "File2"
-
-    @pytest.mark.flaky
-    def test_upload_file_upload_route_does_not_exist(self):
-        client = Client(
-            src="gradio-tests/not-actually-private-file-upload-old-version",
-            hf_token=HF_TOKEN,
-        )
-
-        with patch.object(
-            client.endpoints[0], "serialize", wraps=client.endpoints[0].serialize
-        ) as serialize:
-            with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
-                f.write("Hello from private space!")
-
-                client.submit(1, "foo", f.name, fn_index=0).result()
-                serialize.assert_called_once_with(1, "foo", f.name)
-
-    def test_state_without_serialize(self, stateful_chatbot):
-        with connect(stateful_chatbot, serialize=False) as client:
-            initial_history = [["", None]]
-            message = "Hello"
-            ret = client.predict(message, initial_history, api_name="/submit")
-            assert ret == ("", [["", None], ["Hello", "I love you"]])
-
     def test_does_not_upload_dir(self, stateful_chatbot):
         with connect(stateful_chatbot) as client:
-            initial_history = [["", None]]
+            initial_history = [
+                {"role": "user", "content": [{"text": "", "type": "text"}]}
+            ]
             message = "Hello"
             ret = client.predict(message, initial_history, api_name="/submit")
-            assert ret == ("", [["", None], ["Hello", "I love you"]])
-
-    def test_can_call_mounted_app_via_api(self):
-        def greet(name):
-            return "Hello " + name + "!"
-
-        gradio_app = gr.Interface(
-            fn=greet,
-            inputs=gr.Textbox(lines=2, placeholder="Name Here..."),
-            outputs="text",
-        )
-
-        app = FastAPI()
-        app = gr.mount_gradio_app(app, gradio_app, path="/test/gradio")
-        config = uvicorn.Config(
-            app=app,
-            port=8000,
-            log_level="info",
-        )
-        server = Server(config=config)
-        # Using the gradio Server class to not have
-        # to implement code again to run uvicorn in a separate thread
-        # However, that means we need to set this flag to prevent
-        # run_in_thread_from_blocking
-        server.started = True
-        try:
-            server.run_in_thread()
-            time.sleep(1)
-            client = Client("http://127.0.0.1:8000/test/gradio/")
-            assert client.predict("freddy") == "Hello freddy!"
-        finally:
-            server.thread.join(timeout=1)
-
-    @pytest.mark.flaky
-    def test_predict_with_space_with_api_name_false(self):
-        client = Client("gradio-tests/client-bool-api-name-error")
-        assert client.predict("Hello!", api_name="/run") == "Hello!"
-        assert client.predict("Freddy", api_name="/say_hello") == "hello"
+            assert ret == (
+                "",
+                [
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": ""}],
+                        "metadata": None,
+                        "options": None,
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "Hello"}],
+                        "metadata": None,
+                        "options": None,
+                    },
+                    {
+                        "role": "assistant",
+                        "content": [{"type": "text", "text": "I love you"}],
+                        "metadata": None,
+                        "options": None,
+                    },
+                ],
+            )
 
     def test_return_layout_component(self, hello_world_with_group):
         with connect(hello_world_with_group) as demo:
@@ -613,9 +499,14 @@ class TestClientPredictions:
             assert demo.predict(api_name="/predict") == "\ta\nb" * 90000
 
     def test_queue_full_raises_error(self):
-        demo = gr.Interface(lambda s: f"Hello {s}", "textbox", "textbox").queue(
-            max_size=1
-        )
+        import time
+
+        demo = gr.Interface(
+            lambda s: time.sleep(1) or f"Hello {s}",
+            "textbox",
+            "textbox",
+            api_name="predict",
+        ).queue(max_size=1)
         with connect(demo) as client:
             with pytest.raises(QueueError):
                 job1 = client.submit("Freddy", api_name="/predict")
@@ -635,7 +526,7 @@ class TestClientPredictions:
         def return_bad():
             return data
 
-        demo = gr.Interface(return_bad, None, ["text", "text"])
+        demo = gr.Interface(return_bad, None, ["text", "text"], api_name="predict")
         with connect(demo) as client:
             pred = client.predict(api_name="/predict")
             assert pred[0] == data[0]
@@ -648,6 +539,38 @@ class TestClientPredictions:
             time.sleep(5)
         out = capsys.readouterr().out
         assert "STATE DELETED" in out
+
+    @pytest.mark.flaky
+    def test_add_zero_gpu_headers_no_gradio_context(self):
+        client = Client("gradio/calculator")
+        headers = {"existing": "header"}
+        new_headers = client.add_zero_gpu_headers(headers)
+        assert new_headers == headers  # No changes when not in Gradio context
+
+    @pytest.mark.flaky
+    def test_add_zero_gpu_headers_with_ip_token(self, monkeypatch):
+        client = Client("gradio/calculator")
+        headers = {"existing": "header"}
+
+        class MockRequest:
+            headers = {"x-ip-token": "test-token"}
+
+        class MockContext:
+            request = MagicMock()
+            request.get.return_value = MockRequest()
+
+        monkeypatch.setattr("gradio.context.LocalContext", MockContext)
+        new_headers = client.add_zero_gpu_headers(headers)
+        assert new_headers == {"existing": "header", "x-ip-token": "test-token"}
+
+    def test_multiple_newlines_in_output(self):
+        def test():
+            return """before\x85after"""
+
+        demo = gr.Interface(fn=test, inputs=[], outputs=["text"], api_name="predict")
+        with connect(demo) as client:
+            result = client.predict(api_name="/predict")
+            assert result == "before\x85after"
 
 
 class TestClientPredictionsWithKwargs:
@@ -669,12 +592,48 @@ class TestClientPredictionsWithKwargs:
             result = client.predict(num2=33, operation="multiply", api_name="/predict")
             assert result == 330
 
-    def test_missing_params(self, calculator_demo):
-        with connect(calculator_demo) as client:
+    def test_missing_params(self, hello_world_demo):
+        with connect(hello_world_demo) as client:
             with pytest.raises(
-                TypeError, match="No value provided for required argument: num2"
+                TypeError, match="No value provided for required argument: punctuation"
             ):
-                client.predict(num1=3, operation="add", api_name="/predict")
+                client.predict(name="Alice", api_name="/greet")
+
+    def test_chatbot_message_format(self, chatbot_message_format):
+        with connect(chatbot_message_format) as client:
+            _, history = client.predict("hello", [], api_name="/chat")
+            assert history[1]["role"] == "assistant"
+            assert history[1]["content"][0]["text"] in [
+                "How are you?",
+                "I love you",
+                "I'm very hungry",
+            ]
+            _, history = client.predict("hi", history, api_name="/chat")
+            assert history[2]["role"] == "user"
+            assert history[2]["content"][0]["text"] == "hi"
+            assert history[3]["role"] == "assistant"
+            assert history[3]["content"][0]["text"] in [
+                "How are you?",
+                "I love you",
+                "I'm very hungry",
+            ]
+
+    def test_client_forwards_event_data(self):
+        with gr.Blocks() as demo:
+            button = gr.Button("Click me")
+            output = gr.JSON()
+
+            def return_event_data(evt: gr.EventData):
+                return evt._data
+
+            button.click(
+                fn=return_event_data, inputs=None, outputs=output, api_name="click"
+            )
+
+        with connect(demo) as client:
+            fn = client.endpoints[0].make_end_to_end_fn(client.new_helper(0))
+            result = fn(event_data={"foo": "bar", "baz": 123}, api_name="/click")
+            assert result == {"foo": "bar", "baz": 123}
 
 
 class TestStatusUpdates:
@@ -761,6 +720,7 @@ class TestStatusUpdates:
 
             assert all(s in messages for s in statuses)
 
+    @pytest.mark.flaky
     @patch("gradio_client.client.Endpoint.make_end_to_end_fn")
     def test_messages_correct_two_concurrent(
         self, mock_make_end_to_end_fn, calculator_demo
@@ -846,138 +806,12 @@ class TestAPIInfo:
     @pytest.mark.flaky
     @pytest.mark.parametrize("trailing_char", ["/", ""])
     def test_test_endpoint_src(self, trailing_char):
-        src = "https://gradio-calculator.hf.space" + trailing_char
+        src = "https://gradio-tests-image-identity-new.hf.space" + trailing_char
         client = Client(src=src)
-        assert client.endpoints[0].root_url == "https://gradio-calculator.hf.space/"
-
-    @pytest.mark.flaky
-    def test_numerical_to_label_space(self):
-        client = Client("gradio-tests/titanic-survival")
-        assert client.view_api(return_format="dict") == {
-            "named_endpoints": {
-                "/predict": {
-                    "parameters": [
-                        {
-                            "label": "Sex",
-                            "type": {"type": "string"},
-                            "python_type": {"type": "str", "description": ""},
-                            "component": "Radio",
-                            "example_input": "Howdy!",
-                            "serializer": "StringSerializable",
-                        },
-                        {
-                            "label": "Age",
-                            "type": {"type": "number"},
-                            "python_type": {"type": "int | float", "description": ""},
-                            "component": "Slider",
-                            "example_input": 5,
-                            "serializer": "NumberSerializable",
-                        },
-                        {
-                            "label": "Fare (british pounds)",
-                            "type": {"type": "number"},
-                            "python_type": {"type": "int | float", "description": ""},
-                            "component": "Slider",
-                            "example_input": 5,
-                            "serializer": "NumberSerializable",
-                        },
-                    ],
-                    "returns": [
-                        {
-                            "label": "output",
-                            "type": {"type": {}, "description": "any valid json"},
-                            "python_type": {
-                                "type": "str",
-                                "description": "filepath to JSON file",
-                            },
-                            "component": "Label",
-                            "serializer": "JSONSerializable",
-                        }
-                    ],
-                },
-                "/predict_1": {
-                    "parameters": [
-                        {
-                            "label": "Sex",
-                            "type": {"type": "string"},
-                            "python_type": {"type": "str", "description": ""},
-                            "component": "Radio",
-                            "example_input": "Howdy!",
-                            "serializer": "StringSerializable",
-                        },
-                        {
-                            "label": "Age",
-                            "type": {"type": "number"},
-                            "python_type": {"type": "int | float", "description": ""},
-                            "component": "Slider",
-                            "example_input": 5,
-                            "serializer": "NumberSerializable",
-                        },
-                        {
-                            "label": "Fare (british pounds)",
-                            "type": {"type": "number"},
-                            "python_type": {"type": "int | float", "description": ""},
-                            "component": "Slider",
-                            "example_input": 5,
-                            "serializer": "NumberSerializable",
-                        },
-                    ],
-                    "returns": [
-                        {
-                            "label": "output",
-                            "type": {"type": {}, "description": "any valid json"},
-                            "python_type": {
-                                "type": "str",
-                                "description": "filepath to JSON file",
-                            },
-                            "component": "Label",
-                            "serializer": "JSONSerializable",
-                        }
-                    ],
-                },
-                "/predict_2": {
-                    "parameters": [
-                        {
-                            "label": "Sex",
-                            "type": {"type": "string"},
-                            "python_type": {"type": "str", "description": ""},
-                            "component": "Radio",
-                            "example_input": "Howdy!",
-                            "serializer": "StringSerializable",
-                        },
-                        {
-                            "label": "Age",
-                            "type": {"type": "number"},
-                            "python_type": {"type": "int | float", "description": ""},
-                            "component": "Slider",
-                            "example_input": 5,
-                            "serializer": "NumberSerializable",
-                        },
-                        {
-                            "label": "Fare (british pounds)",
-                            "type": {"type": "number"},
-                            "python_type": {"type": "int | float", "description": ""},
-                            "component": "Slider",
-                            "example_input": 5,
-                            "serializer": "NumberSerializable",
-                        },
-                    ],
-                    "returns": [
-                        {
-                            "label": "output",
-                            "type": {"type": {}, "description": "any valid json"},
-                            "python_type": {
-                                "type": "str",
-                                "description": "filepath to JSON file",
-                            },
-                            "component": "Label",
-                            "serializer": "JSONSerializable",
-                        }
-                    ],
-                },
-            },
-            "unnamed_endpoints": {},
-        }
+        assert (
+            client.endpoints[0].root_url
+            == "https://gradio-tests-image-identity-new.hf.space/gradio_api/"
+        )
 
     def test_state_does_not_appear(self, state_demo):
         with connect(state_demo) as client:
@@ -990,36 +824,9 @@ class TestAPIInfo:
     def test_private_space(self):
         client = Client(
             "gradio-tests/not-actually-private-space",
+            token=HF_TOKEN,
         )
-        assert len(client.endpoints) == 3
-        assert len([e for e in client.endpoints if e.is_valid]) == 2
-        assert len([e for e in client.endpoints if e.is_valid and e.api_name]) == 1
-        assert client.view_api(return_format="dict") == {
-            "named_endpoints": {
-                "/predict": {
-                    "parameters": [
-                        {
-                            "label": "x",
-                            "type": {"type": "string"},
-                            "python_type": {"type": "str", "description": ""},
-                            "component": "Textbox",
-                            "example_input": "Howdy!",
-                            "serializer": "StringSerializable",
-                        }
-                    ],
-                    "returns": [
-                        {
-                            "label": "output",
-                            "type": {"type": "string"},
-                            "python_type": {"type": "str", "description": ""},
-                            "component": "Textbox",
-                            "serializer": "StringSerializable",
-                        }
-                    ],
-                }
-            },
-            "unnamed_endpoints": {},
-        }
+        assert "/predict" in client.view_api(return_format="dict")["named_endpoints"]
 
     def test_api_info_of_local_demo(self, calculator_demo):
         with connect(calculator_demo) as client:
@@ -1073,6 +880,7 @@ class TestAPIInfo:
                         "component": "Number",
                     }
                 ],
+                "description": "",
             }
             assert api_info["unnamed_endpoints"] == {}
 
@@ -1099,29 +907,18 @@ class TestAPIInfo:
             outputs = info["named_endpoints"]["/predict"]["returns"]
 
             assert inputs[0]["type"]["type"] == "array"
-            assert inputs[0]["python_type"] == {
-                "type": "List[filepath]",
-                "description": "",
-            }
+            assert inputs[0]["python_type"]["type"] == "list[filepath]"
+
             assert isinstance(inputs[0]["example_input"], list)
             assert isinstance(inputs[0]["example_input"][0], dict)
 
-            assert inputs[1]["python_type"] == {
-                "type": "filepath",
-                "description": "",
-            }
+            assert inputs[1]["python_type"]["type"] == "filepath"
             assert isinstance(inputs[1]["example_input"], dict)
 
-            assert outputs[0]["python_type"] == {
-                "type": "List[filepath]",
-                "description": "",
-            }
+            assert outputs[0]["python_type"]["type"] == "list[filepath]"
             assert outputs[0]["type"]["type"] == "array"
 
-            assert outputs[1]["python_type"] == {
-                "type": "filepath",
-                "description": "",
-            }
+            assert outputs[1]["python_type"]["type"] == "filepath"
 
     def test_layout_components_in_output(self, hello_world_with_group):
         with connect(hello_world_with_group) as client:
@@ -1149,8 +946,9 @@ class TestAPIInfo:
                                 "component": "Textbox",
                             }
                         ],
+                        "description": "",
                     },
-                    "/show_group": {"parameters": [], "returns": []},
+                    "/show_group": {"parameters": [], "returns": [], "description": ""},
                 },
                 "unnamed_endpoints": {},
             }
@@ -1189,6 +987,7 @@ class TestAPIInfo:
                                 "component": "Number",
                             },
                         ],
+                        "description": "This is a greeting function.",
                     },
                     "/open": {
                         "parameters": [],
@@ -1200,6 +999,7 @@ class TestAPIInfo:
                                 "component": "Number",
                             }
                         ],
+                        "description": "",
                     },
                     "/close": {
                         "parameters": [],
@@ -1211,6 +1011,7 @@ class TestAPIInfo:
                                 "component": "Number",
                             }
                         ],
+                        "description": "",
                     },
                 },
                 "unnamed_endpoints": {},
@@ -1222,6 +1023,7 @@ class TestEndpoints:
     def test_upload(self):
         client = Client(
             src="gradio-tests/not-actually-private-file-upload",
+            token=HF_TOKEN,
         )
         response = MagicMock(status_code=200)
         response.json.return_value = [
@@ -1237,30 +1039,19 @@ class TestEndpoints:
             with patch("builtins.open", MagicMock()):
                 with patch.object(pathlib.Path, "name") as mock_name:
                     mock_name.side_effect = lambda x: x
-                    results = client.endpoints[0]._upload(
-                        ["pre1", ["pre2", "pre3", "pre4"], ["pre5", "pre6"], "pre7"]
+                    results = client.endpoints[0]._upload_file(
+                        handle_file(__file__), data_index=0
                     )
-
-        res = []
-        for re in results:
-            if isinstance(re, list):
-                res.append([r["name"] for r in re])
-            else:
-                res.append(re["name"])
-
-        assert res == [
-            "file1",
-            ["file2", "file3", "file4"],
-            ["file5", "file6"],
-            "file7",
-        ]
+        assert results["path"] == "file1"
 
     @pytest.mark.flaky
     def test_download_private_file(self, gradio_temp_dir):
         client = Client(
             src="gradio/zip_files",
         )
-        url_path = "https://gradio-tests-not-actually-private-spacev4-sse.hf.space/file=lion.jpg"
+        url_path = handle_file(
+            "https://gradio-tests-not-actually-private-spacev4-sse.hf.space/file=lion.jpg"
+        )
         file = client.endpoints[0]._upload_file(url_path, 0)  # type: ignore
         assert file["path"].endswith(".jpg")
 
@@ -1276,6 +1067,53 @@ class TestEndpoints:
         with pytest.raises(httpx.HTTPStatusError):
             client.endpoints[0]._download_file({"path": "https://example.com/foo"})  # type: ignore
 
+    @pytest.mark.flaky
+    def test_download_stream_file_uses_url_directly(self, monkeypatch, gradio_temp_dir):
+        """Test that stream files use the URL directly instead of constructing from path."""
+        client = Client(
+            src="gradio/zip_files",
+        )
+
+        # Mock response for stream file
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.iter_bytes.return_value = [b"test content"]
+
+        def mock_stream(*args, **kwargs):
+            # Verify that the URL is used directly for streams
+            called_url: str = args[1]  # Second argument is the URL
+            assert called_url.endswith("api/stream/test_file.txt"), (
+                f"Expected stream URL, got: {called_url}"
+            )
+            return mock_response
+
+        monkeypatch.setattr(httpx, "stream", mock_stream)
+
+        # Test stream file with URL
+        stream_file_data = {
+            "path": "some/wrong/path",  # This path should be ignored for streams
+            "url": "/api/stream/test_file.txt",  # This URL should be used directly
+            "is_stream": True,
+        }
+
+        with patch("pathlib.Path.resolve", return_value="/tmp/test_file.txt"):
+            client.endpoints[0]._download_file(stream_file_data)  # type: ignore
+
+        # Test non-stream file still uses path-based URL construction
+        regular_file_data = {"path": "regular/file.txt", "is_stream": False}
+
+        def mock_stream_regular(*args, **kwargs):
+            called_url = args[1]
+            assert called_url.endswith("file=regular/file.txt"), (
+                f"Expected path-based URL, got: {called_url}"
+            )
+            return mock_response
+
+        monkeypatch.setattr(httpx, "stream", mock_stream_regular)
+
+        with patch("pathlib.Path.resolve", return_value="/tmp/regular_file.txt"):
+            client.endpoints[0]._download_file(regular_file_data)  # type: ignore
+
 
 cpu = huggingface_hub.SpaceHardware.CPU_BASIC
 
@@ -1288,14 +1126,14 @@ class TestDuplication:
         Client.duplicate(
             "gradio/calculator",
             "test",
-            hf_token=HF_TOKEN,
+            token=HF_TOKEN,
         )
         mock_runtime.assert_any_call("gradio/calculator", token=HF_TOKEN)
         mock_init.assert_called()
         Client.duplicate(
             "gradio/calculator",
             "gradio-tests/test",
-            hf_token=HF_TOKEN,
+            token=HF_TOKEN,
         )
         mock_runtime.assert_any_call("gradio/calculator", token=HF_TOKEN)
         mock_init.assert_called()
@@ -1329,7 +1167,7 @@ class TestDuplication:
             "test",
             hardware="cpu-upgrade",
             sleep_timeout=15,
-            hf_token=HF_TOKEN,
+            token=HF_TOKEN,
         )
         assert mock_set_timeout.call_count == 1
         _, called_kwargs = mock_set_timeout.call_args
@@ -1346,7 +1184,7 @@ class TestDuplication:
             Client.duplicate(
                 "gradio/calculator",
                 name,
-                hf_token=HF_TOKEN,
+                token=HF_TOKEN,
                 secrets={"test_key": "test_value", "test_key2": "test_value2"},
             )
             mock_add_secret.assert_called_with(
@@ -1363,19 +1201,24 @@ class TestDuplication:
             )
 
 
-def test_upstream_exceptions(count_generator_demo_exception):
-    with connect(count_generator_demo_exception, show_error=True) as client:
-        with pytest.raises(
-            AppError, match="The upstream Gradio app has raised an exception: Oh no!"
-        ):
-            client.predict(7, api_name="/count")
+def test_httpx_kwargs(increment_demo):
+    with connect(
+        increment_demo, client_kwargs={"httpx_kwargs": {"timeout": 5}}
+    ) as client:
+        with patch("httpx.post", MagicMock()) as mock_post:
+            with pytest.raises(Exception):
+                client.predict(1, api_name="/increment_with_queue")
+            assert mock_post.call_args.kwargs["timeout"] == 5
 
-    with connect(count_generator_demo_exception) as client:
-        with pytest.raises(
-            AppError,
-            match="The upstream Gradio app has raised an exception but has not enabled verbose error reporting.",
-        ):
-            client.predict(7, api_name="/count")
 
-        with pytest.raises(ValueError, match="Cannot call predict on this function"):
-            client.predict(5, api_name="/count_forever")
+def test_x_gradio_user_header():
+    def fn(name: str, request: gr.Request) -> str:
+        return f"Hello, {name}! Your x-gradio-user is {request.headers.get('x-gradio-user', 'not provided')}"
+
+    app = gr.Interface(fn, "text", "text")
+
+    with connect(app) as client:
+        res = client.submit(
+            "Gradio", headers={"x-gradio-user": "test-user"}, api_name="/fn"
+        ).result()
+        assert res == "Hello, Gradio! Your x-gradio-user is api"

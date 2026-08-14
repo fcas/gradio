@@ -1,3 +1,4 @@
+# type: ignore
 import gradio as gr
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import torch
@@ -14,7 +15,7 @@ def translate(text, src_lang, tgt_lang):
     """
     translation_pipeline = pipeline("translation", model=model, tokenizer=tokenizer, src_lang=src_lang, tgt_lang=tgt_lang, max_length=400, device=device)
     result = translation_pipeline(text)
-    return result[0]['translation_text']
+    return result[0]['translation_text']  # type: ignore
 
 demo = gr.Interface(
     fn=translate,
@@ -27,7 +28,8 @@ demo = gr.Interface(
     examples=[["Building a translation demo with Gradio is so easy!", "eng_Latn", "spa_Latn"]],
     cache_examples=False,
     title="Translation Demo",
-    description="This demo is a simplified version of the original [NLLB-Translator](https://huggingface.co/spaces/Narrativaai/NLLB-Translator) space"
+    description="This demo is a simplified version of the original [NLLB-Translator](https://huggingface.co/spaces/Narrativaai/NLLB-Translator) space",
+    api_name="predict"
 )
 
 demo.launch()

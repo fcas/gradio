@@ -1,14 +1,26 @@
-import type { Status } from "../types";
-import { QUEUE_FULL_MSG } from "../constants";
-import type { ApiData, ApiInfo, Config, JsApiData } from "../types";
+import {
+	HOST_URL,
+	INVALID_URL_MSG,
+	QUEUE_FULL_MSG,
+	SPACE_METADATA_ERROR_MSG,
+	SPACE_NOT_FOUND_MSG
+} from "../constants";
+import type {
+	ApiData,
+	ApiInfo,
+	Config,
+	JsApiData,
+	EndpointInfo,
+	Status
+} from "../types";
 import { determine_protocol } from "./init_helpers";
 
-export const RE_SPACE_NAME = /^[^\/]*\/[^\/]*$/;
-export const RE_SPACE_DOMAIN = /.*hf\.space\/{0,1}$/;
+export const RE_SPACE_NAME = /^[a-zA-Z0-9_\-\.]+\/[a-zA-Z0-9_\-\.]+$/;
+export const RE_SPACE_DOMAIN = /.*hf\.space\/{0,1}.*$/;
 
 export async function process_endpoint(
 	app_reference: string,
-	hf_token?: `hf_${string}`
+	token?: `hf_${string}`
 ): Promise<{
 	space_id: string | false;
 	host: string;
@@ -16,38 +28,53 @@ export async function process_endpoint(
 	http_protocol: "http:" | "https:";
 }> {
 	const headers: { Authorization?: string } = {};
-	if (hf_token) {
-		headers.Authorization = `Bearer ${hf_token}`;
+	if (token) {
+		headers.Authorization = `Bearer ${token}`;
 	}
 
-	const _app_reference = app_reference.trim();
+	const _app_reference = app_reference.trim().replace(/\/$/, "");
 
 	if (RE_SPACE_NAME.test(_app_reference)) {
+		// app_reference is a HF space name
+		let res: Response;
 		try {
-			const res = await fetch(
-				`https://huggingface.co/api/spaces/${_app_reference}/host`,
+			res = await fetch(
+				`https://huggingface.co/api/spaces/${_app_reference}/${HOST_URL}`,
 				{ headers }
 			);
-
-			const _host = (await res.json()).host;
-
-			return {
-				space_id: app_reference,
-				...determine_protocol(_host)
-			};
 		} catch (e) {
-			throw new Error(
-				"Space metadata could not be loaded. " + (e as Error).message
-			);
+			throw new Error(SPACE_METADATA_ERROR_MSG);
 		}
+
+		if (res.status === 401 || res.status === 404) {
+			// the space does not exist, or it is private and the request was made
+			// without (or with an invalid) token
+			throw new Error(SPACE_NOT_FOUND_MSG(_app_reference, res.status));
+		}
+
+		let _host: string | undefined;
+		try {
+			_host = (await res.json()).host;
+		} catch (e) {
+			throw new Error(SPACE_METADATA_ERROR_MSG);
+		}
+		if (!_host) {
+			throw new Error(SPACE_METADATA_ERROR_MSG);
+		}
+
+		return {
+			space_id: _app_reference,
+			...determine_protocol(_host)
+		};
 	}
 
 	if (RE_SPACE_DOMAIN.test(_app_reference)) {
+		// app_reference is a direct HF space domain
 		const { ws_protocol, http_protocol, host } =
 			determine_protocol(_app_reference);
 
 		return {
-			space_id: host.replace(".hf.space", ""),
+			space_id: host.split("/")[0].replace(".hf.space", ""),
 			ws_protocol,
 			http_protocol,
 			host
@@ -59,6 +86,18 @@ export async function process_endpoint(
 		...determine_protocol(_app_reference)
 	};
 }
+
+export const join_urls = (...urls: string[]): string => {
+	try {
+		return urls.reduce((base_url: string, part: string) => {
+			base_url = base_url.replace(/\/+$/, "");
+			part = part.replace(/^\/+/, "");
+			return new URL(part, base_url + "/").toString();
+		});
+	} catch (e) {
+		throw new Error(INVALID_URL_MSG);
+	}
+};
 
 export function transform_api_info(
 	api_info: ApiInfo<ApiData>,
@@ -75,27 +114,38 @@ export function transform_api_info(
 			transformed_info[category] = {};
 
 			Object.entries(api_info[category]).forEach(
-				([endpoint, { parameters, returns }]) => {
+				([endpoint, endpoint_info]) => {
+					// Guard against malformed or legacy `/info` payloads that are
+					// missing `parameters`/`returns` so that we surface a usable API
+					// description instead of crashing with
+					// "Cannot read properties of undefined (reading 'map')".
+					const parameters = endpoint_info?.parameters ?? [];
+					const returns = endpoint_info?.returns ?? [];
 					const dependencyIndex =
-						config.dependencies.findIndex(
+						config.dependencies.find(
 							(dep) =>
 								dep.api_name === endpoint ||
 								dep.api_name === endpoint.replace("/", "")
-						) ||
+						)?.id ||
 						api_map[endpoint.replace("/", "")] ||
 						-1;
 
+					const dependency =
+						dependencyIndex !== -1
+							? config.dependencies.find((dep) => dep.id == dependencyIndex)
+							: undefined;
+
 					const dependencyTypes =
 						dependencyIndex !== -1
-							? config.dependencies[dependencyIndex].types
-							: { continuous: false, generator: false };
+							? dependency?.types
+							: { generator: false, cancel: false };
 
 					if (
-						dependencyIndex !== -1 &&
-						config.dependencies[dependencyIndex]?.inputs?.length !==
-							parameters.length
+						dependency &&
+						Array.isArray(dependency.inputs) &&
+						dependency.inputs.length !== parameters.length
 					) {
-						const components = config.dependencies[dependencyIndex].inputs.map(
+						const components = dependency.inputs.map(
 							(input) => config.components.find((c) => c.id === input)?.type
 						);
 
@@ -115,7 +165,9 @@ export function transform_api_info(
 									parameters.splice(idx, 0, new_param);
 								}
 							});
-						} catch (e) {}
+						} catch (e) {
+							console.error(e);
+						}
 					}
 
 					const transform_type = (
@@ -137,7 +189,10 @@ export function transform_api_info(
 						returns: returns.map((r: ApiData) =>
 							transform_type(r, r?.component, r?.serializer, "return")
 						),
-						type: dependencyTypes
+						type: dependencyTypes,
+						...(endpoint_info?.oauth_token
+							? { oauth_token: endpoint_info.oauth_token }
+							: {})
 					};
 				}
 			);
@@ -153,6 +208,7 @@ export function get_type(
 	serializer: string,
 	signature_type: "return" | "parameter"
 ): string | undefined {
+	if (component === "Api") return type.type;
 	switch (type?.type) {
 		case "string":
 			return "string";
@@ -214,9 +270,12 @@ export function handle_message(
 		| "log"
 		| "none"
 		| "heartbeat"
+		| "streaming"
+		| "broken_connection"
 		| "unexpected_error";
 	data?: any;
 	status?: Status;
+	original_msg?: string;
 } {
 	const queue = true;
 	switch (data.msg) {
@@ -242,6 +301,17 @@ export function handle_message(
 		case "unexpected_error":
 			return {
 				type: "unexpected_error",
+				status: {
+					queue,
+					message: data.message,
+					session_not_found: data.session_not_found,
+					stage: "error",
+					success: false
+				}
+			};
+		case "broken_connection":
+			return {
+				type: "broken_connection",
 				status: {
 					queue,
 					message: data.message,
@@ -284,9 +354,27 @@ export function handle_message(
 					stage: data.success ? "generating" : "error",
 					code: data.code,
 					progress_data: data.progress_data,
-					eta: data.average_duration
+					eta: data.average_duration,
+					changed_state_ids: data.success
+						? data.output.changed_state_ids
+						: undefined
 				},
 				data: data.success ? data.output : null
+			};
+		case "process_streaming":
+			return {
+				type: "streaming",
+				status: {
+					queue,
+					message: data.output.error,
+					stage: "streaming",
+					time_limit: data.time_limit,
+					code: data.code,
+					progress_data: data.progress_data,
+					changed_state_ids: data.output.changed_state_ids,
+					eta: data.eta
+				},
+				data: data.output
 			};
 		case "process_completed":
 			if ("error" in data.output) {
@@ -294,7 +382,11 @@ export function handle_message(
 					type: "update",
 					status: {
 						queue,
-						message: data.output.error as string,
+						title: (data.output.title as string | null) ?? "Error",
+						message:
+							(data.output.error as string | null) ?? "An error occurred",
+						visible: data.output.visible as boolean,
+						duration: data.output.duration as number,
 						stage: "error",
 						code: data.code,
 						success: data.success
@@ -308,7 +400,13 @@ export function handle_message(
 					message: !data.success ? data.output.error : undefined,
 					stage: data.success ? "complete" : "error",
 					code: data.code,
-					progress_data: data.progress_data
+					progress_data: data.progress_data,
+					changed_state_ids: data.success
+						? data.output.changed_state_ids
+						: undefined,
+					used_cache: data.used_cache,
+					cache_duration: data.cache_duration,
+					avg_time: data.avg_time
 				},
 				data: data.success ? data.output : null
 			};
@@ -324,7 +422,8 @@ export function handle_message(
 					position: 0,
 					success: data.success,
 					eta: data.eta
-				}
+				},
+				original_msg: "process_starts"
 			};
 	}
 
@@ -354,15 +453,19 @@ export function handle_message(
  */
 
 export const map_data_to_params = (
-	data: unknown[] | Record<string, unknown>,
-	api_info: ApiInfo<JsApiData | ApiData>
+	data: unknown[] | Record<string, unknown> = [],
+	endpoint_info: EndpointInfo<JsApiData | ApiData>
 ): unknown[] => {
-	const parameters = Object.values(api_info.named_endpoints).flatMap(
-		(values) => values.parameters
-	);
+	// Workaround for the case where the endpoint_info is undefined
+	// See https://github.com/gradio-app/gradio/pull/8820#issuecomment-2237381761
+	const parameters = endpoint_info ? endpoint_info.parameters : [];
 
 	if (Array.isArray(data)) {
-		if (data.length > parameters.length) {
+		if (
+			endpoint_info &&
+			parameters.length > 0 &&
+			data.length > parameters.length
+		) {
 			console.warn("Too many arguments provided for the endpoint.");
 		}
 		return data;

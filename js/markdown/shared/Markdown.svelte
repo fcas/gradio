@@ -1,36 +1,98 @@
 <script lang="ts">
-	import { createEventDispatcher } from "svelte";
-	import { copy } from "@gradio/utils";
+	import { copy, css_units } from "@gradio/utils";
+	import { Copy, Check } from "@gradio/icons";
+	import type { ILoadingStatus as LoadingStatus } from "@gradio/statustracker";
+	import { IconButton, IconButtonWrapper } from "@gradio/atoms";
+	import type { ThemeMode } from "@gradio/core";
 
-	import MarkdownCode from "./MarkdownCode.svelte";
+	import { MarkdownCode } from "@gradio/markdown-code";
 
-	export let elem_classes: string[] = [];
-	export let visible = true;
-	export let value: string;
-	export let min_height = false;
-	export let rtl = false;
-	export let sanitize_html = true;
-	export let line_breaks = false;
-	export let latex_delimiters: {
-		left: string;
-		right: string;
-		display: boolean;
-	}[];
-	export let header_links = false;
+	let {
+		elem_classes = [],
+		visible = true,
+		value,
+		min_height = undefined,
+		rtl = false,
+		sanitize_html = true,
+		line_breaks = false,
+		latex_delimiters = [],
+		header_links = false,
+		height = undefined,
+		show_copy_button = false,
+		loading_status = undefined,
+		theme_mode,
+		onchange = () => {},
+		oncopy = (val) => {}
+	}: {
+		elem_classes?: string[];
+		visible?: boolean | "hidden";
+		value: string;
+		min_height?: number | string | undefined;
+		rtl?: boolean;
+		sanitize_html?: boolean;
+		line_breaks?: boolean;
+		latex_delimiters?: {
+			left: string;
+			right: string;
+			display: boolean;
+		}[];
+		header_links?: boolean;
+		height?: number | string | undefined;
+		show_copy_button?: boolean | undefined;
+		loading_status?: LoadingStatus | undefined;
+		theme_mode?: ThemeMode;
+		onchange?: () => void;
+		oncopy?: (val: any) => void;
+	} = $props();
 
-	const dispatch = createEventDispatcher<{ change: undefined }>();
+	let copied = $state(false);
+	let timer: NodeJS.Timeout;
 
-	$: value, dispatch("change");
+	let old_value = $state(value);
+	$effect(() => {
+		if (value !== old_value) {
+			old_value = value;
+			onchange();
+		}
+	});
+
+	async function handle_copy(): Promise<void> {
+		if ("clipboard" in navigator) {
+			await navigator.clipboard.writeText(value);
+			oncopy({ value: value });
+			copy_feedback();
+		}
+	}
+
+	function copy_feedback(): void {
+		copied = true;
+		if (timer) clearTimeout(timer);
+		timer = setTimeout(() => {
+			copied = false;
+		}, 1000);
+	}
 </script>
 
 <div
-	class:min={min_height}
-	class="prose {elem_classes.join(' ')}"
+	class="prose {elem_classes?.join(' ') || ''}"
 	class:hide={!visible}
 	data-testid="markdown"
 	dir={rtl ? "rtl" : "ltr"}
 	use:copy
+	style={height ? `max-height: ${css_units(height)}; overflow-y: auto;` : ""}
+	style:min-height={min_height && loading_status?.status !== "pending"
+		? css_units(min_height)
+		: undefined}
 >
+	{#if show_copy_button}
+		<IconButtonWrapper>
+			<IconButton
+				Icon={copied ? Check : Copy}
+				onclick={handle_copy}
+				label={copied ? "Copied conversation" : "Copy conversation"}
+			></IconButton>
+		</IconButtonWrapper>
+	{/if}
 	<MarkdownCode
 		message={value}
 		{latex_delimiters}
@@ -38,6 +100,7 @@
 		{line_breaks}
 		chatbot={false}
 		{header_links}
+		{theme_mode}
 	/>
 </div>
 
@@ -59,9 +122,6 @@
 		max-width: 100%;
 	}
 
-	.min {
-		min-height: var(--size-24);
-	}
 	.hide {
 		display: none;
 	}

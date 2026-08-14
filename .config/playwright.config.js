@@ -1,10 +1,9 @@
-import { defineConfig } from "@playwright/test";
+import { defineConfig, devices } from "@playwright/test";
 
 const base = defineConfig({
 	use: {
 		screenshot: "only-on-failure",
 		trace: "retain-on-failure",
-		permissions: ["clipboard-read", "clipboard-write", "microphone"],
 		bypassCSP: true,
 		launchOptions: {
 			args: [
@@ -15,37 +14,43 @@ const base = defineConfig({
 			]
 		}
 	},
-	expect: { timeout: 15000 },
-	timeout: 30000,
-	testMatch: /.*.spec.ts/,
+	expect: { timeout: 10_000 },
+	timeout: 30_000,
+	testMatch: /.*\.spec\.ts/,
 	testDir: "..",
-	workers: process.env.CI ? 1 : undefined,
-	retries: 3
+	// Reload tests must stay serial (CUSTOM_TEST=1) — several rewrite a shared
+	// `run.py` in the same cwd, so parallel workers would clobber each other.
+	// For the regular browser suite on CI, allow PW_BROWSER_WORKERS to raise the
+	// count above the historical default of 4 (the runner has 16 cores and the
+	// tests are largely wait-bound, so they parallelize well).
+	workers: process.env.CUSTOM_TEST
+		? 1
+		: process.env.CI
+			? Number(process.env.PW_BROWSER_WORKERS) || 4
+			: undefined,
+	retries: 3,
+	fullyParallel: false
 });
+
+// There are Firefox-specific issues such as https://github.com/gradio-app/gradio/pull/9528 so we want to run the tests on Firefox, but Firefox sometimes fails to start in the GitHub Actions environment so we disable it on CI.
+const localOnly = (project) => (process.env.CI ? undefined : project);
 
 const normal = defineConfig(base, {
-	globalSetup: process.env.CUSTOM_TEST ? undefined : "./playwright-setup.js"
+	// globalSetup removed - each test file now launches its own Gradio app via fixture
+	projects: [
+		localOnly({
+			name: "firefox",
+			use: { ...devices["Desktop Firefox"] },
+			grep: /@firefox/
+		}),
+		{
+			name: "chrome",
+			use: {
+				...devices["Desktop Chrome"],
+				permissions: ["clipboard-read", "clipboard-write", "microphone"]
+			}
+		}
+	].filter(Boolean)
 });
 
-normal.projects = undefined; // Explicitly unset this field due to https://github.com/microsoft/playwright/issues/28795
-
-const lite = defineConfig(base, {
-	webServer: {
-		command: "python -m http.server 8000 --directory ../js/lite",
-		url: "http://localhost:8000/",
-		reuseExistingServer: !process.env.CI
-	},
-	testMatch: [
-		"**/file_component_events.spec.ts",
-		"**/chatbot_multimodal.spec.ts",
-		"**/kitchen_sink.spec.ts",
-		"**/gallery_component_events.spec.ts",
-		"**/image_remote_url.spec.ts" // To detect the bugs on Lite fixed in https://github.com/gradio-app/gradio/pull/8011 and https://github.com/gradio-app/gradio/pull/8026
-	],
-	workers: 1,
-	retries: 3
-});
-
-lite.projects = undefined; // Explicitly unset this field due to https://github.com/microsoft/playwright/issues/28795
-
-export default !!process.env.GRADIO_E2E_TEST_LITE ? lite : normal;
+export default normal;

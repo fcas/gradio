@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import pytest
 
 import gradio as gr
@@ -20,7 +21,7 @@ class TestPlot:
 
         iface = gr.Interface(plot, "slider", "plot")
         with utils.MatplotlibBackendMananger():
-            output = await iface.process_api(fn_index=0, inputs=[10], state={})
+            output = await iface.process_api(block_fn=0, inputs=[10])
         assert output["data"][0]["type"] == "matplotlib"
         assert output["data"][0]["plot"].startswith("data:image/webp;base64")
 
@@ -53,9 +54,34 @@ class TestPlot:
                 color="Origin",
             )
         )
-        out = gr.Plot().postprocess(chart).model_dump()
+        assert (out := gr.Plot().postprocess(chart))
+        out = out.model_dump()
         assert isinstance(out["plot"], str)
         assert out["plot"] == chart.to_json()
+
+    def test_postprocess_closes_matplotlib_figure(self):
+        """
+        postprocess
+        """
+        with utils.MatplotlibBackendMananger():
+            plt.close("all")
+            component = gr.Plot()
+            fig = plt.figure()
+            plt.plot([1, 2, 3], [1, 2, 3])
+            component.postprocess(fig)
+            assert not plt.get_fignums()
+
+    def test_postprocess_accepts_closed_figure(self):
+        """
+        postprocess
+        """
+        with utils.MatplotlibBackendMananger():
+            component = gr.Plot(format="png")
+            fig = plt.figure()
+            plt.plot([1, 2, 3], [1, 2, 3])
+            first = component.postprocess(fig)
+            second = component.postprocess(fig)
+            assert first and second and first.plot == second.plot
 
     def test_plot_format_parameter(self):
         """
@@ -68,4 +94,5 @@ class TestPlot:
             plt.plot([1, 2, 3], [1, 2, 3])
 
         component = gr.Plot(format="jpeg")
-        assert component.postprocess(fig).plot.startswith("data:image/jpeg")
+        assert (result := component.postprocess(fig))
+        assert result.plot.startswith("data:image/jpeg")

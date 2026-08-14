@@ -3,7 +3,6 @@ import numpy as np
 
 import gradio as gr
 
-
 def sales_projections(employee_data):
     sales_data = employee_data.iloc[:, 1:4].astype("int").to_numpy()
     regression_values = np.apply_along_axis(
@@ -22,7 +21,6 @@ def sales_projections(employee_data):
     plt.legend(employee_data["Name"])
     return employee_data, plt.gcf(), regression_values
 
-
 demo = gr.Interface(
     sales_projections,
     gr.Dataframe(
@@ -31,6 +29,7 @@ demo = gr.Interface(
     ),
     ["dataframe", "plot", "numpy"],
     description="Enter sales figures for employees to predict sales trajectory over year.",
+    api_name="predict"
 )
 if __name__ == "__main__":
     demo.launch()

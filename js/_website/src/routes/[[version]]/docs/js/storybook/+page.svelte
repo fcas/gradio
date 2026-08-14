@@ -1,24 +1,22 @@
 <script lang="ts">
 	import JSDocsNav from "$lib/components/JSDocsNav.svelte";
 	import MetaTags from "$lib/components/MetaTags.svelte";
-	import { page } from "$app/stores";
+	import { page } from "$app/state";
 
-	export let data;
+	let { data } = $props();
 
-	let name = data.name;
-	let readme_html = data.readme_html;
-	let js_pages = data.js_pages;
+	let js_pages = $derived(data.js_pages);
 
-	let js_components = js_pages.filter((c) => c !== "js-client");
+	let js_components = $derived(js_pages.filter((c) => c !== "js-client"));
 
-	$: name = data.name;
-	$: readme_html = data.readme_html;
+	let name = $derived(data.name);
+	let readme_html = $derived(data.readme_html);
 </script>
 
 <MetaTags
 	title={"Gradio Storybook"}
-	url={$page.url.pathname}
-	canonical={$page.url.pathname}
+	url={page.url.pathname}
+	canonical={page.url.pathname}
 	description={"All of Gradio's UI Components"}
 />
 
@@ -29,7 +27,7 @@
 		<div class="flex flex-col w-full min-w-full lg:w-10/12 lg:min-w-0">
 			<div>
 				<p
-					class="lg:ml-10 bg-gradient-to-r from-orange-100 to-orange-50 border border-orange-200 px-4 py-1 mr-2 rounded-full text-orange-800 mb-1 w-fit float-left"
+					class="lg:ml-10 bg-orange-100 dark:bg-orange-900 border border-orange-200 dark:border-orange-700 px-4 py-1 mr-2 rounded-full text-orange-800 dark:text-orange-200 mb-1 w-fit float-left"
 				>
 					New to Gradio? Start here: <a class="link" href="/quickstart"
 						>Getting Started</a
@@ -41,12 +39,11 @@
 					See the <a class="link" href="/changelog">Release History</a>
 				</p>
 			</div>
-
-			<div class="flex flex-row ml-10 mt-5">
+			<div class="flex flex-row lg:ml-10 mt-5">
 				<iframe
 					id="storybook"
 					src="https://main--649585a46a67480e3074dc75.chromatic.com/"
-					class="grow m-0 p-0 h-[70vh] border border-gray-200 shadow-xl rounded-xl"
+					class="grow m-0 p-0 h-[70vh] border border-gray-200 shadow-xl rounded-xl w-full"
 				></iframe>
 			</div>
 		</div>

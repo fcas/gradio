@@ -1,9 +1,12 @@
-<script context="module">
-	import { Template, Story } from "@storybook/addon-svelte-csf";
+<script module>
+	import { defineMeta } from "@storybook/addon-svelte-csf";
 	import Audio from "./Index.svelte";
 	import { allModes } from "../storybook/modes";
+	import { wrapProps } from "../storybook/wrapProps";
 
-	export const meta = {
+	const audio_sample = "/audio_sample.mp3";
+
+	const { Story } = defineMeta({
 		title: "Components/Audio",
 		component: Audio,
 		parameters: {
@@ -13,113 +16,89 @@
 					mobile: allModes["mobile"]
 				}
 			}
+		},
+		argTypes: {
+			label: {
+				control: "text",
+				description: "The audio component label"
+			},
+			interactive: {
+				control: "boolean",
+				description: "Whether the component is interactive"
+			}
 		}
-	};
+	});
 </script>
 
-<Template let:args>
-	<Audio value="Audio" {...args} />
-</Template>
+{#snippet template(args)}
+	<Audio {...wrapProps(args)} />
+{/snippet}
 
 <Story
 	name="Audio Player"
 	args={{
 		value: {
-			path: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			url: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			orig_name: "sample-0.mp3"
+			path: audio_sample,
+			url: audio_sample,
+			orig_name: "audio_sample.mp3"
 		},
-		label: "Audio Player"
+		label: "Audio Player",
+		waveform_options: { show_recording_waveform: true },
+		sources: ["upload", "microphone"]
 	}}
+	{template}
 />
-
 <Story
 	name="Audio Recorder"
 	args={{
 		value: null,
 		interactive: true,
 		sources: ["microphone"],
-		label: "Audio Recorder"
+		label: "Audio Recorder",
+		waveform_options: { show_recording_waveform: true }
 	}}
+	{template}
 />
-
 <Story
-	name="Audio Recorder with download button"
+	name="Output with hidden download button"
 	args={{
 		value: {
-			path: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			url: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			orig_name: "sample-0.mp3"
-		},
-		interactive: true,
-		show_download_button: true,
-		sources: ["microphone"],
-		label: "Audio Recorder"
-	}}
-/>
-
-<Story
-	name="output with hidden download button"
-	args={{
-		value: {
-			path: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			url: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			orig_name: "sample-0.mp3"
+			path: audio_sample,
+			url: audio_sample,
+			orig_name: "audio_sample.mp3"
 		},
 		interactive: false,
-		show_download_button: false,
-		label: "Audio Recorder"
+		buttons: [],
+		label: "Audio Recorder",
+		waveform_options: { show_recording_waveform: true },
+		sources: ["upload"]
 	}}
+	{template}
 />
-
 <Story
 	name="Upload Audio"
 	args={{
 		value: null,
 		interactive: true,
 		sources: ["upload", "microphone"],
-		label: "Audio Upload"
+		label: "Audio Upload",
+		waveform_options: { show_recording_waveform: true }
 	}}
+	{template}
 />
-
 <Story
-	name="with autoplay"
+	name="Upload with disabled editing"
 	args={{
 		value: {
-			path: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			url: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			orig_name: "sample-0.mp3"
+			path: audio_sample,
+			url: audio_sample,
+			orig_name: "audio_sample.mp3"
 		},
 		interactive: true,
 		sources: ["microphone", "upload"],
 		label: "Audio Upload",
-		autoplay: true
+		editable: false,
+		waveform_options: { show_recording_waveform: true }
 	}}
-/>
-
-<Story
-	name="upload with disabled editing"
-	args={{
-		value: {
-			path: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			url: "https://audio-samples.github.io/samples/mp3/blizzard_unconditional/sample-0.mp3",
-			orig_name: "sample-0.mp3"
-		},
-		interactive: true,
-		sources: ["microphone", "upload"],
-		label: "Audio Upload",
-		editable: false
-	}}
-/>
-
-<Story
-	name="with hidden recording waveform"
-	args={{
-		value: null,
-		interactive: true,
-		sources: ["microphone"],
-		waveform_options: {
-			show_recording_waveform: false
-		}
-	}}
+	{template}
 />

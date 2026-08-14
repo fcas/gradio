@@ -1,35 +1,29 @@
 <script lang="ts">
 	import Copy from "./Copy.svelte";
 	import Download from "./Download.svelte";
+	import { IconButtonWrapper } from "@gradio/atoms";
+	import type { CustomButton as CustomButtonType } from "@gradio/utils";
 
-	export let value: string;
-	export let language: string;
+	interface Props {
+		value: string;
+		language: string;
+		buttons?: (string | CustomButtonType)[] | null;
+		on_custom_button_click?: ((id: number) => void) | null;
+	}
+
+	let {
+		value,
+		language,
+		buttons = null,
+		on_custom_button_click = null
+	}: Props = $props();
 </script>
 
-<div>
-	<Download {value} {language} />
-	<Copy {value} />
-</div>
-
-<style>
-	div {
-		display: flex;
-		position: absolute;
-		top: var(--block-label-margin);
-		right: var(--block-label-margin);
-		align-items: center;
-
-		z-index: var(--layer-2);
-		transition: 150ms;
-		box-shadow: var(--shadow-drop);
-		border: 1px solid var(--border-color-primary);
-		border-top: none;
-		border-right: none;
-		border-radius: var(--block-label-right-radius);
-		background: var(--block-label-background-fill);
-		overflow: hidden;
-		color: var(--block-label-text-color);
-		font: var(--font);
-		font-size: var(--button-small-text-size);
-	}
-</style>
+<IconButtonWrapper {buttons} {on_custom_button_click}>
+	{#if buttons?.some((btn) => typeof btn === "string" && btn === "download")}
+		<Download {value} {language} />
+	{/if}
+	{#if buttons?.some((btn) => typeof btn === "string" && btn === "copy")}
+		<Copy {value} />
+	{/if}
+</IconButtonWrapper>

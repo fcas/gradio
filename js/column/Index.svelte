@@ -1,40 +1,33 @@
-<script lang="ts">
-	export let scale: number | null = null;
-	export let gap = true;
-	export let min_width = 0;
-	export let elem_id = "";
-	export let elem_classes: string[] = [];
-	export let visible = true;
-	export let variant: "default" | "panel" | "compact" = "default";
+<script module lang="ts">
+	export { default as BaseColumn } from "./BaseColumn.svelte";
 </script>
 
-<div
-	id={elem_id}
-	class={elem_classes.join(" ")}
-	class:gap
-	class:compact={variant === "compact"}
-	class:panel={variant === "panel"}
-	class:hide={!visible}
-	style:flex-grow={scale}
-	style:min-width="calc(min({min_width}px, 100%))"
->
-	<slot />
-</div>
+<script lang="ts">
+	import { Gradio } from "@gradio/utils";
+	import BaseColumn from "./BaseColumn.svelte";
+
+	let props = $props();
+
+	const gradio = new Gradio<{}, { variant: "default" | "panel" | "compact" }>(
+		props
+	);
+</script>
+
+<BaseColumn {...gradio.shared} {...gradio.props}>
+	{@render props.children?.()}
+</BaseColumn>
 
 <style>
 	div {
 		display: flex;
 		position: relative;
 		flex-direction: column;
+		gap: var(--layout-gap);
 	}
 
 	div > :global(*),
 	div > :global(.form > *) {
 		width: var(--size-full);
-	}
-
-	.gap {
-		gap: var(--layout-gap);
 	}
 
 	.hide {

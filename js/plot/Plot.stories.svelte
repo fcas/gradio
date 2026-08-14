@@ -1,10 +1,11 @@
-<script context="module">
-	import { Template, Story } from "@storybook/addon-svelte-csf";
+<script module>
+	import { defineMeta } from "@storybook/addon-svelte-csf";
 	import PlotComponent from "./Index.svelte";
 	import { allModes } from "../storybook/modes";
-	import { test_plot } from "./testplot";
+	import { matplotlib_plot } from "./testplot";
+	import { wrapProps } from "../storybook/wrapProps";
 
-	export const meta = {
+	const { Story } = defineMeta({
 		title: "Components/Plot",
 		component: PlotComponent,
 		parameters: {
@@ -15,24 +16,28 @@
 				}
 			}
 		}
-	};
+	});
 </script>
 
-<Template let:args>
-	<PlotComponent value="Plot" {...args} />
-</Template>
-
 <Story
-	name="with value"
+	name="with matplotlib value"
 	args={{
-		value: test_plot,
+		value: matplotlib_plot,
 		label: "Plot"
 	}}
-/>
+>
+	{#snippet template(args)}
+		<PlotComponent {...wrapProps(args)} />
+	{/snippet}
+</Story>
 
 <Story
 	name="with no value"
 	args={{
 		label: "Plot"
 	}}
-/>
+>
+	{#snippet template(args)}
+		<PlotComponent {...wrapProps(args)} />
+	{/snippet}
+</Story>

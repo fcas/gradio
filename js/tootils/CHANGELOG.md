@@ -1,4 +1,604 @@
-# @gradio/tootils
+# @self/tootils
+
+## 0.16.0
+
+### Features
+
+- [#13329](https://github.com/gradio-app/gradio/pull/13329) [`7ac583a`](https://github.com/gradio-app/gradio/commit/7ac583a38a4c995d172033ff6e3700390201ff21) - Make builds go zoom zoom.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/utils@0.14.0
+- @gradio/statustracker@0.15.2
+
+## 0.15.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.15.1
+
+## 0.15.0
+
+### Features
+
+- [#13526](https://github.com/gradio-app/gradio/pull/13526) [`53cb4ca`](https://github.com/gradio-app/gradio/commit/53cb4cae1ec3521e9170d12867253516413ba37a) - Run `pnpm lint` and `pnpm ts:check` on CI.  Thanks @abidlabs!
+
+### Dependency updates
+
+- @gradio/statustracker@0.15.0
+- @gradio/utils@0.13.0
+
+## 0.14.0
+
+### Features
+
+- [#13348](https://github.com/gradio-app/gradio/pull/13348) [`d7c4cad`](https://github.com/gradio-app/gradio/commit/d7c4cadd8fdd5205ae544d57ca001fb32b2aae5a) - fix(e2e): plug gradio-app leaks in playwright test harness, and stop spurious ECONNRESETs from aborting the free-port scan.  Thanks @pngwn!
+- [#13348](https://github.com/gradio-app/gradio/pull/13348) [`d7c4cad`](https://github.com/gradio-app/gradio/commit/d7c4cadd8fdd5205ae544d57ca001fb32b2aae5a) - fix(e2e): plug gradio-app leaks in playwright test harness.  Thanks @pngwn!
+
+## 0.13.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.14.1
+
+## 0.13.0
+
+### Features
+
+- [#13192](https://github.com/gradio-app/gradio/pull/13192) [`f4656ae`](https://github.com/gradio-app/gradio/commit/f4656ae89c30b78b4f0652b6778176d34c1b61af) - Button Unit Tests.  Thanks @dawoodkhan82!
+- [#13235](https://github.com/gradio-app/gradio/pull/13235) [`394423d`](https://github.com/gradio-app/gradio/commit/394423ddd3ec919b8dabceb3903479ab3bf8194f) - clear DOM after cleanup in render.  Thanks @hannahblair!
+
+### Fixes
+
+- [#13181](https://github.com/gradio-app/gradio/pull/13181) [`755c3d3`](https://github.com/gradio-app/gradio/commit/755c3d32c388a36d2296f8d895c5c0e1144fb54f) - fix: show validation errors on StatusTracker-dependent components.  Thanks @hysts!
+
+### Dependency updates
+
+- @gradio/statustracker@0.14.0
+
+## 0.12.0
+
+### Features
+
+- [#13151](https://github.com/gradio-app/gradio/pull/13151) [`c13daab`](https://github.com/gradio-app/gradio/commit/c13daab68aa40cb58f2c643a650b5db48e986935) - add test utils.  Thanks @pngwn!
+
+### Fixes
+
+- [#13183](https://github.com/gradio-app/gradio/pull/13183) [`1bf9bae`](https://github.com/gradio-app/gradio/commit/1bf9bae723475ad664f7d3d32596856c4881e63d) - Ensure the Accordion's `expand` and `collapse` events fire when toggled from python.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/utils@0.12.2
+- @gradio/statustracker@0.13.1
+
+## 0.11.0
+
+### Features
+
+- [#12998](https://github.com/gradio-app/gradio/pull/12998) [`d5e1b8f`](https://github.com/gradio-app/gradio/commit/d5e1b8f6cb7473b70fc8c082589996d5e0402810) - use a real browser environment for unit tests.  Thanks @pngwn!
+- [#13049](https://github.com/gradio-app/gradio/pull/13049) [`9ea8359`](https://github.com/gradio-app/gradio/commit/9ea8359458afbbae5431e581486fa739b85366a2) - Fix flaky playwright tests.  Thanks @freddyaboulton!
+- [#13055](https://github.com/gradio-app/gradio/pull/13055) [`ccf119d`](https://github.com/gradio-app/gradio/commit/ccf119d33f705a0c84897082359275e72e88f988) - add test helper and more textbox tests.  Thanks @pngwn!
+
+### Fixes
+
+- [#13028](https://github.com/gradio-app/gradio/pull/13028) [`30af84c`](https://github.com/gradio-app/gradio/commit/30af84cdd100855999281de8720cbb6d58b48556) - Browser tests follow-up.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/utils@0.12.1
+- @gradio/statustracker@0.13.0
+
+## 0.10.0
+
+### Features
+
+- [#12879](https://github.com/gradio-app/gradio/pull/12879) [`c498688`](https://github.com/gradio-app/gradio/commit/c4986883b267570d76b442899c6fc09d14e3e222) - Ensure svelte version mismatches do not break custom components.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/statustracker@0.12.5
+- @gradio/utils@0.12.0
+
+## 0.9.0
+
+### Dependency updates
+
+- @gradio/utils@0.11.3
+- @gradio/statustracker@0.12.4
+
+## 0.9.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.12.3
+
+## 0.9.0
+
+### Features
+
+- [#12781](https://github.com/gradio-app/gradio/pull/12781) [`c64d861`](https://github.com/gradio-app/gradio/commit/c64d8613e96dedf80e47ad03a26a1b94a5761a5a) - Split e2e tests into independent apps.  Thanks @freddyaboulton!
+
+### Fixes
+
+- [#12800](https://github.com/gradio-app/gradio/pull/12800) [`7a1c321`](https://github.com/gradio-app/gradio/commit/7a1c321b6546ba05a353488f5133e8262c4a8a39) - Bump svelte/kit for security reasons.  Thanks @freddyaboulton!
+- [#12472](https://github.com/gradio-app/gradio/pull/12472) [`9a2bc0d`](https://github.com/gradio-app/gradio/commit/9a2bc0dacdd2b3f670fae815093c61ad08eee7e3) - Re-enable SSR mode.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/statustracker@0.12.2
+- @gradio/utils@0.11.2
+
+## 0.8.2
+
+### Dependency updates
+
+- @gradio/utils@0.11.1
+
+## 0.8.2
+
+### Dependency updates
+
+- @gradio/utils@0.11.0
+- @gradio/statustracker@0.12.1
+
+## 0.8.1
+
+### Dependency updates
+
+- @gradio/utils@0.10.4
+
+## 0.8.1
+
+### Features
+
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - Be able to update visibility programmatically
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - Unit test fixes
+- [#12438](https://github.com/gradio-app/gradio/pull/12438) [`25ffc03`](https://github.com/gradio-app/gradio/commit/25ffc0398f8feb43d817c02b2ab970c16de6d797) - Svelte5 migration and bugfix
+
+### Dependencies
+
+- @gradio/statustracker@0.12.0
+- @gradio/utils@0.10.3
+
+## 0.8.1-dev.0
+
+### Dependency updates
+
+- @gradio/statustracker@0.12.0-dev.1
+
+## 0.8.1-dev.0
+
+### Dependency updates
+
+- @gradio/utils@0.10.3-dev.0
+- @gradio/statustracker@0.12.0-dev.0
+
+## 0.8.0
+
+### Features
+
+- [#11858](https://github.com/gradio-app/gradio/pull/11858) [`3f8ea13`](https://github.com/gradio-app/gradio/commit/3f8ea13a8ca92abf0ad34392e403a449fda3c6c2) - remove lite.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/statustracker@0.11.1
+
+## 0.7.29
+
+### Dependency updates
+
+- @gradio/statustracker@0.11.0
+
+## 0.7.28
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.18
+
+## 0.7.28
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.17
+
+## 0.7.27
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.16
+
+## 0.7.26
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.15
+
+## 0.7.25
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.14
+
+## 0.7.24
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.13
+
+## 0.7.23
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.12
+
+## 0.7.23
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.12
+
+## 0.7.23
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.12
+
+## 0.7.22
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.11
+
+## 0.7.21
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.10
+
+## 0.7.20
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.9
+- @gradio/utils@0.10.2
+
+## 0.7.19
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.8
+
+## 0.7.18
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.7
+
+## 0.7.17
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.6
+
+## 0.7.16
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.5
+
+## 0.7.15
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.4
+
+## 0.7.14
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.3
+- @gradio/utils@0.10.1
+
+## 0.7.13
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.2
+
+## 0.7.12
+
+### Dependency updates
+
+- @gradio/statustracker@0.10.1
+
+## 0.7.11
+
+### Dependency updates
+
+- @gradio/utils@0.10.0
+- @gradio/statustracker@0.10.0
+
+## 0.7.10
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.7
+
+## 0.7.9
+
+### Dependency updates
+
+- @gradio/utils@0.9.0
+- @gradio/statustracker@0.9.6
+
+## 0.7.8
+
+### Dependency updates
+
+- @gradio/utils@0.8.0
+- @gradio/statustracker@0.9.5
+
+## 0.7.7
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.4
+
+## 0.7.6
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.3
+
+## 0.7.5
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.2
+
+## 0.7.4
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.1
+
+## 0.7.3
+
+### Dependency updates
+
+- @gradio/statustracker@0.9.0
+
+## 0.7.2
+
+### Fixes
+
+- [#9528](https://github.com/gradio-app/gradio/pull/9528) [`9004b11`](https://github.com/gradio-app/gradio/commit/9004b110640bdb54995343a870bf080ee15da02d) - Fix Lite to work on FireFox.  Thanks @whitphx!
+
+## 0.7.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.1
+
+## 0.7.0
+
+### Features
+
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - SSR e2e + fixes
+
+### Dependencies
+
+- @gradio/statustracker@0.8.0
+- @gradio/utils@0.7.0
+
+## 0.7.0-beta.5
+
+### Features
+
+- [#9590](https://github.com/gradio-app/gradio/pull/9590) [`e853c41`](https://github.com/gradio-app/gradio/commit/e853c413583d91186aef3aceb0849d0ec0494834) - SSR e2e + fixes.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.5
+
+## 0.6.5-beta.4
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.4
+
+## 0.6.5-beta.3
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.3
+
+## 0.6.5-beta.2
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.2
+
+## 0.6.5-beta.2
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.2
+- @gradio/utils@0.7.0-beta.2
+
+## 0.6.5-beta.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.8.0-beta.1
+- @gradio/utils@0.7.0-beta.1
+
+## 0.6.5
+
+### Fixes
+
+- [#9163](https://github.com/gradio-app/gradio/pull/9163) [`2b6cbf2`](https://github.com/gradio-app/gradio/commit/2b6cbf25908e42cf027324e54ef2cc0baad11a91) - fix exports and generate types.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/utils@0.6.1
+- @gradio/statustracker@0.7.6
+
+## 0.6.4
+
+### Dependency updates
+
+- @gradio/utils@0.6.0
+- @gradio/statustracker@0.7.5
+
+## 0.6.3
+
+### Dependency updates
+
+- @gradio/statustracker@0.7.4
+
+## 0.6.2
+
+### Dependency updates
+
+- @gradio/utils@0.5.2
+- @gradio/statustracker@0.7.3
+
+## 0.6.1
+
+### Dependency updates
+
+- @gradio/statustracker@0.7.2
+
+## 0.6.0
+
+### Highlights
+
+#### Support message format in chatbot 💬 ([#8422](https://github.com/gradio-app/gradio/pull/8422) [`4221290`](https://github.com/gradio-app/gradio/commit/4221290d847041024b1faa3df5585bba0775b8b3))
+
+`gr.Chatbot` and `gr.ChatInterface` now support the [Messages API](https://huggingface.co/docs/text-generation-inference/en/messages_api#messages-api), which is fully compatible with LLM API providers such as Hugging Face Text Generation Inference, OpenAI's chat completions API, and Llama.cpp server. 
+
+Building Gradio applications around these LLM solutions is now even easier! 
+
+`gr.Chatbot` and `gr.ChatInterface` now have a `type` parameter that can accept two values - `'tuples'` and `'messages'`. If set to `'tuples'`, the default chatbot data format is expected. If set to `'messages'`, a list of dictionaries with `content` and `role` keys is expected. See below - 
+
+```python
+def chat_greeter(msg, history):
+    history.append({"role": "assistant", "content": "Hello!"})
+    return history
+```
+
+Additionally, gradio now exposes a `gr.ChatMessage` dataclass you can use for IDE type hints and auto completion.
+
+<img width="852" alt="image" src="https://github.com/freddyaboulton/freddyboulton/assets/41651716/d283e8f3-b194-466a-8194-c7e697dca9ad">
+
+
+#### Tool use in Chatbot 🛠️
+
+The Gradio Chatbot can now natively display tool usage and intermediate thoughts common in Agent and chain-of-thought workflows!
+
+If you are using the new "messages" format, simply add a `metadata` key with a dictionary containing a `title` key and `value`. This will display the assistant message in an expandable message box to show the result of a tool or intermediate step.
+
+```python
+import gradio as gr
+from gradio import ChatMessage
+import time
+
+def generate_response(history):
+    history.append(ChatMessage(role="user", content="What is the weather in San Francisco right now?"))
+    yield history
+    time.sleep(0.25)
+    history.append(ChatMessage(role="assistant",
+                               content="In order to find the current weather in San Francisco, I will need to use my weather tool.")
+                               )
+    yield history
+    time.sleep(0.25)
+
+    history.append(ChatMessage(role="assistant",
+                               content="API Error when connecting to weather service.",
+                              metadata={"title": "💥 Error using tool 'Weather'"})
+                  )
+    yield history
+    time.sleep(0.25)
+
+    history.append(ChatMessage(role="assistant",
+                               content="I will try again",
+                              ))
+    yield history
+    time.sleep(0.25)
+
+    history.append(ChatMessage(role="assistant",
+                               content="Weather 72 degrees Fahrenheit with 20% chance of rain.",
+                                metadata={"title": "🛠️ Used tool 'Weather'"}
+                              ))
+    yield history
+    time.sleep(0.25)
+
+    history.append(ChatMessage(role="assistant",
+                               content="Now that the API succeeded I can complete my task.",
+                              ))
+    yield history
+    time.sleep(0.25)
+
+    history.append(ChatMessage(role="assistant",
+                               content="It's a sunny day in San Francisco with a current temperature of 72 degrees Fahrenheit and a 20% chance of rain. Enjoy the weather!",
+                              ))
+    yield history
+
+
+with gr.Blocks() as demo:
+    chatbot  = gr.Chatbot(type="messages")
+    button = gr.Button("Get San Francisco Weather")
+    button.click(generate_response, chatbot, chatbot)
+
+if __name__ == "__main__":
+    demo.launch()
+```
+
+
+
+![tool-box-demo](https://github.com/freddyaboulton/freddyboulton/assets/41651716/cf73ecc9-90ac-42ce-bca5-768e0cc00a48)
+
+ Thanks @freddyaboulton!
+
+### Features
+
+- [#8222](https://github.com/gradio-app/gradio/pull/8222) [`3a6142f`](https://github.com/gradio-app/gradio/commit/3a6142fa4829aa6d65d7b8388fbba49cc8db8ab1) - Lite load perf ci.  Thanks @whitphx!
+
+### Dependency updates
+
+- @gradio/utils@0.5.1
+- @gradio/statustracker@0.7.1
+
+## 0.5.1
+
+### Dependency updates
+
+- @gradio/utils@0.5.0
+- @gradio/statustracker@0.7.0
+
+## 0.5.0
+
+### Features
+
+- [#8417](https://github.com/gradio-app/gradio/pull/8417) [`96d8de2`](https://github.com/gradio-app/gradio/commit/96d8de231270321da5f310768643363276df3204) - add delete event to `File` component.  Thanks @pngwn!
+
+### Dependency updates
+
+- @gradio/statustracker@0.6.0
+
+## 0.4.5
+
+### Dependency updates
+
+- @gradio/statustracker@0.6.0
+
+## 0.4.4
+
+### Dependency updates
+
+- @gradio/utils@0.4.2
+- @gradio/statustracker@0.5.5
 
 ## 0.4.3
 

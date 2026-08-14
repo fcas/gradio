@@ -1,0 +1,157 @@
+import { test, expect } from "@self/tootils";
+
+test.describe.configure({ mode: "serial" });
+test.skip(
+	process.env?.GRADIO_SSR_MODE?.toLowerCase() === "true",
+	"These tests flake in SSR MODE only in CI"
+);
+
+test("clicking through tabs shows correct content", async ({ page }) => {
+	await page.waitForTimeout(1000);
+	await page.getByRole("tab", { name: "Tab 2" }).click();
+	await expect(page.getByText("Text 1!")).toBeHidden();
+	await expect(page.getByText("Text 2!")).toBeVisible();
+
+	await page.getByRole("tab", { name: "Tab 4" }).click();
+	await expect(page.getByText("Text 2!")).toBeHidden();
+	await expect(page.getByText("Text 4!")).toBeVisible();
+
+	await page.getByRole("tab", { name: "Set 2" }).click();
+	await page.getByRole("tab", { name: "Tab 12" }).click();
+	await expect(page.getByText("Text 2!")).toBeHidden();
+	await expect(page.getByText("Text 12!")).toBeVisible();
+});
+
+test("select event fires on the Tabs container itself", async ({ page }) => {
+	await page.waitForTimeout(1000);
+	// `outer_tabs.select(...)` should fire when the active top-level tab changes.
+	// Click "Set 1" first so the subsequent clicks are guaranteed tab changes
+	// regardless of which tab the serial test run left active.
+	await page.getByRole("tab", { name: "Set 1" }).click();
+
+	await page.getByRole("tab", { name: "Set 2" }).click();
+	await expect(page.getByLabel("Outer Container Tab")).toHaveValue("Set 2");
+
+	await page.getByRole("tab", { name: "Set 1" }).click();
+	await expect(page.getByLabel("Outer Container Tab")).toHaveValue("Set 1");
+});
+
+test("per-tab select fires exactly once per tab change", async ({ page }) => {
+	await page.waitForTimeout(1000);
+	const count = page.getByLabel("Tab Select Count");
+	const selected = page.getByLabel("Selected Tab");
+
+	await page.getByRole("tab", { name: "Tab 2" }).click();
+	await expect(selected).toHaveValue("Tab 2");
+	// Settle before baselining: the count is a separate listener, and a
+	// double-dispatch would briefly show `before + 1` before settling on
+	// `before + 2`, so we must read only once the value is stable.
+	await page.waitForTimeout(1000);
+	const before = Number(await count.inputValue());
+
+	await page.getByRole("tab", { name: "Tab 5" }).click();
+	await expect(selected).toHaveValue("Tab 5");
+	await page.waitForTimeout(1000);
+	await expect(count).toHaveValue(String(before + 1));
+});
+
+test("correct selected tab shown", async ({ page }) => {
+	await page.waitForTimeout(1000);
+	await page.getByRole("tab", { name: "Tab 2" }).click();
+	await expect(page.getByLabel("Selected Tab")).toHaveValue("Tab 2");
+
+	await page.getByRole("tab", { name: "Tab 5" }).click();
+	await expect(page.getByLabel("Selected Tab")).toHaveValue("Tab 5");
+
+	await page
+		.getByRole("button", { name: "Make Even Tabs Uninteractive" })
+		.click();
+	await page.waitForTimeout(1000);
+
+	await expect(page.getByRole("tab", { name: "Tab 2" })).toBeDisabled();
+
+	await page.getByRole("button", { name: "Make All Tabs Interactive" }).click();
+	await page.waitForTimeout(1000);
+
+	await page.getByRole("tab", { name: "Tab 2" }).click();
+	await expect(page.getByLabel("Selected Tab")).toHaveValue("Tab 2");
+
+	await page.getByRole("button", { name: "Hide Odd Tabs" }).click();
+	await page.waitForTimeout(1000);
+
+	await page.getByRole("tab", { name: "Tab 4" }).click();
+	await page.getByRole("button", { name: "Show All Tabs" }).click();
+	await page.waitForTimeout(1000);
+
+	await page.getByRole("tab", { name: "Tab 9" }).click();
+	await expect(page.getByLabel("Selected Tab")).toHaveValue("Tab 9");
+});
+
+test("output from one tab to another works", async ({ page }) => {
+	await page.waitForTimeout(1000);
+	await page.getByRole("tab", { name: "Tab 4" }).click();
+	await page.getByLabel("Input 4").fill("hi");
+	await page.getByLabel("Input 4").press("Enter");
+
+	await page.getByRole("tab", { name: "Set 2" }).click();
+	await page.getByRole("tab", { name: "Tab 13" }).click();
+	await expect(page.getByLabel("Input 13")).toHaveValue("");
+	await expect(page.getByLabel("Input 13")).toBeVisible();
+	await expect(page.getByLabel("Input 14")).toBeHidden();
+
+	await page.getByRole("tab", { name: "Tab 14" }).click();
+	await expect(page.getByLabel("Input 14")).toBeVisible();
+	await expect(page.getByLabel("Input 14")).toHaveValue("hi");
+});
+
+test("programmatic selection works", async ({ page }) => {
+	await page.waitForTimeout(1000);
+	await expect(page.getByText("Text 1!")).toBeHidden();
+	await expect(page.getByText("Text 3!")).toBeVisible();
+
+	await page.getByLabel("Select Tab #").click();
+	await page.getByLabel("Select Tab #").fill("6");
+	await page.getByLabel("Select Tab #").press("Enter");
+
+	await expect(page.getByText("Text 3!")).toBeHidden();
+	await expect(page.getByText("Text 6!")).toBeVisible();
+});
+
+test("tab initialized with interactive=False can be unlocked", async ({
+	page
+}) => {
+	await page.waitForTimeout(1000);
+
+	// The "Locked Tab" should be visible but disabled
+	const locked_tab = page.getByRole("tab", { name: "Locked Tab" });
+	await expect(locked_tab).toBeVisible();
+	await expect(locked_tab).toBeDisabled();
+
+	// Click unlock button
+	await page.getByRole("button", { name: "Unlock Tab" }).click();
+	await page.waitForTimeout(1000);
+
+	// Tab should now be enabled and clickable
+	await expect(locked_tab).toBeEnabled();
+	await locked_tab.click();
+	await expect(page.getByText("This tab was unlocked!")).toBeVisible();
+});
+
+test("lazy load subtabs and accordion components", async ({ page }) => {
+	await page.waitForTimeout(1000);
+	// Main tab components visible and rendered
+	await expect(page.getByText("Text 3!")).toBeVisible();
+	await expect(page.getByLabel("Input 3")).toBeVisible();
+	// Subtabs not visible
+	await expect(page.getByLabel("Input 1")).not.toBeVisible();
+	await expect(page.getByLabel("Input 2")).not.toBeVisible();
+	await expect(page.getByLabel("Input 4")).not.toBeVisible();
+
+	// Click second main tab (Set 2); subtab (Tab 11) should render
+	await page.getByRole("tab", { name: "Set 2" }).click();
+	await expect(page.getByText("Text 11!")).toBeVisible();
+	await expect(page.getByLabel("Input 11")).toBeVisible();
+	// Other subtabs should not be visible
+	await expect(page.getByLabel("Input 12")).not.toBeVisible();
+	await expect(page.getByLabel("Input 14")).not.toBeVisible();
+});

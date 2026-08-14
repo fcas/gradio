@@ -1,5 +1,161 @@
 # @gradio/preview
 
+## 0.17.0
+
+### Features
+
+- [#13329](https://github.com/gradio-app/gradio/pull/13329) [`7ac583a`](https://github.com/gradio-app/gradio/commit/7ac583a38a4c995d172033ff6e3700390201ff21) - Make builds go zoom zoom.  Thanks @pngwn!
+
+### Fixes
+
+- [#13622](https://github.com/gradio-app/gradio/pull/13622) [`95369a3`](https://github.com/gradio-app/gradio/commit/95369a3ddaf69665adfbed092fca88fb432ee80a) - Fix Windows filename/path handling (reserved names, node probe, file URLs).  Thanks @abidlabs!
+
+## 0.16.2
+
+### Fixes
+
+- [#13182](https://github.com/gradio-app/gradio/pull/13182) [`2e36802`](https://github.com/gradio-app/gradio/commit/2e36802a04251315454c3872aa888bbf984ae4c1) - fix: make example field optional in cc build.  Thanks @xr843!
+
+## 0.16.1
+
+### Fixes
+
+- [#12566](https://github.com/gradio-app/gradio/pull/12566) [`7760161`](https://github.com/gradio-app/gradio/commit/7760161258abe6329b754dd6d2511fc3b61fed95) - Fix custom components in SSR Mode + Custom Component Examples.  Thanks @freddyaboulton!
+
+## 0.16.0
+
+### Features
+
+- [#12879](https://github.com/gradio-app/gradio/pull/12879) [`c498688`](https://github.com/gradio-app/gradio/commit/c4986883b267570d76b442899c6fc09d14e3e222) - Ensure svelte version mismatches do not break custom components.  Thanks @pngwn!
+
+### Fixes
+
+- [#12970](https://github.com/gradio-app/gradio/pull/12970) [`7326ea3`](https://github.com/gradio-app/gradio/commit/7326ea312bee7ccdaf4a1e4e11ace8f11b607ca5) - remove new console logs.  Thanks @hannahblair!
+
+## 0.15.2
+
+### Fixes
+
+- [#12800](https://github.com/gradio-app/gradio/pull/12800) [`7a1c321`](https://github.com/gradio-app/gradio/commit/7a1c321b6546ba05a353488f5133e8262c4a8a39) - Bump svelte/kit for security reasons.  Thanks @freddyaboulton!
+
+## 0.15.1
+
+### Fixes
+
+- [#12416](https://github.com/gradio-app/gradio/pull/12416) [`7e867fd`](https://github.com/gradio-app/gradio/commit/7e867fde9070849fb474a08544c72f2522a9cbe9) - Fix custom components for gradio 6.  Thanks @pngwn!
+
+## 0.15.0
+
+### Features
+
+- [#11908](https://github.com/gradio-app/gradio/pull/11908) [`029034f`](https://github.com/gradio-app/gradio/commit/029034f7853ea018d110efe9b7e2ef7d1407091c) - fix custom components
+- [#12438](https://github.com/gradio-app/gradio/pull/12438) [`25ffc03`](https://github.com/gradio-app/gradio/commit/25ffc0398f8feb43d817c02b2ab970c16de6d797) - Svelte5 migration and bugfix
+
+## 0.15.0-dev.0
+
+### Features
+
+- [#12397](https://github.com/gradio-app/gradio/pull/12397) [`f2a47fe`](https://github.com/gradio-app/gradio/commit/f2a47fe4f155a1ed93ad3e8f18504e9427ba61d2) - fix custom components.  Thanks @pngwn!
+
+## 0.14.0
+
+### Features
+
+- [#11427](https://github.com/gradio-app/gradio/pull/11427) [`6b2bcd0`](https://github.com/gradio-app/gradio/commit/6b2bcd097ae5ef999a7fb273ecf7c7e4c0eab305) - Improve load times of the Gradio front-end.  Thanks @pngwn!
+
+## 0.13.2
+
+### Fixes
+
+- [#11395](https://github.com/gradio-app/gradio/pull/11395) [`59e8b23`](https://github.com/gradio-app/gradio/commit/59e8b236cbbbfd3ad7667fbad31a16677098d9a6) - Be able to run gradio cc dev if the parent directory has spaces.  Thanks @freddyaboulton!
+
+## 0.13.1
+
+### Fixes
+
+- [#11304](https://github.com/gradio-app/gradio/pull/11304) [`bdbc210`](https://github.com/gradio-app/gradio/commit/bdbc210dbf09555b3bd8f647c6f19621771b5771) - Fix custom components build and dev mode with certain base components (Image and Audio at least).  Thanks @pngwn!
+
+## 0.13.0
+
+### Features
+
+- [#9794](https://github.com/gradio-app/gradio/pull/9794) [`70bda3b`](https://github.com/gradio-app/gradio/commit/70bda3bb187a7219f4707344cf47edd0a021da19) - fix storybook build.  Thanks @pngwn!
+
+## 0.12.1
+
+### Fixes
+
+- [#9707](https://github.com/gradio-app/gradio/pull/9707) [`8d848dd`](https://github.com/gradio-app/gradio/commit/8d848dd1e46751a9c5bf26245158add47be44834) - Add a port timeout detection feature for gradio/preview.  Thanks @achilou!
+
+## 0.12.0
+
+### Features
+
+
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - Fix custom component CLI on main/5.0
+
+### Fixes
+
+- [#8843](https://github.com/gradio-app/gradio/pull/8843) [`6f95286`](https://github.com/gradio-app/gradio/commit/6f95286337459efbccb95c9cfac63355669df9ee) - Fix package.json `exports` of @gradio/preview
+
+## 0.12.0-beta.1
+
+### Features
+
+- [#9482](https://github.com/gradio-app/gradio/pull/9482) [`bd6c5f2`](https://github.com/gradio-app/gradio/commit/bd6c5f237b0631d86273c7684c3bf2b1011992a3) - Fix custom component CLI on main/5.0.  Thanks @freddyaboulton!
+
+## 0.11.2-beta.0
+
+### Fixes
+
+- [#9468](https://github.com/gradio-app/gradio/pull/9468) [`36d6636`](https://github.com/gradio-app/gradio/commit/36d6636719b31aef07afbc0209713372edf672b5) - Fix package.json `exports` of @gradio/preview.  Thanks @Col0ring!
+
+## 0.11.2
+
+### Features
+
+- [#9478](https://github.com/gradio-app/gradio/pull/9478) [`00d1846`](https://github.com/gradio-app/gradio/commit/00d18463ffeb49d882003f1e4c8bb72f8f7fb596) - fix exports in `main`.  Thanks @abidlabs!
+
+## 0.11.1
+
+### Fixes
+
+- [#9163](https://github.com/gradio-app/gradio/pull/9163) [`2b6cbf2`](https://github.com/gradio-app/gradio/commit/2b6cbf25908e42cf027324e54ef2cc0baad11a91) - fix exports and generate types.  Thanks @pngwn!
+
+## 0.11.0
+
+### Features
+
+- [#9091](https://github.com/gradio-app/gradio/pull/9091) [`bbbd1f5`](https://github.com/gradio-app/gradio/commit/bbbd1f5ebee9143db8628af64c5669d99f2574d7) - Be able to set optimizeDeps options in gradio.config.js.  Thanks @freddyaboulton!
+
+## 0.10.2
+
+### Fixes
+
+- [#8926](https://github.com/gradio-app/gradio/pull/8926) [`69f1e36`](https://github.com/gradio-app/gradio/commit/69f1e36f7d64e2b3fcc8a9ebb5f07a1f1d6c56fa) - fix typescript issue with custom components.  Thanks @pngwn!
+
+## 0.10.1
+
+### Fixes
+
+- [#8761](https://github.com/gradio-app/gradio/pull/8761) [`078663a`](https://github.com/gradio-app/gradio/commit/078663a3a4f9c19e86e415295e82be7103260f97) - Fix issue with virtual module in custom components.  Thanks @pngwn!
+
+## 0.10.0
+
+### Features
+
+- [#8520](https://github.com/gradio-app/gradio/pull/8520) [`595ecf3`](https://github.com/gradio-app/gradio/commit/595ecf35da6cd5f9aa7d9135282d005b63fbdef1) - Add build target option to the custom component `gradio.config.js` file.  Thanks @pngwn!
+
+### Fixes
+
+- [#8531](https://github.com/gradio-app/gradio/pull/8531) [`88de38e`](https://github.com/gradio-app/gradio/commit/88de38e2597bc39532be77b917f1f02b1a11647d) - Fix custom components on windows.  Thanks @freddyaboulton!
+
+## 0.9.1
+
+### Fixes
+
+- [#8439](https://github.com/gradio-app/gradio/pull/8439) [`63d36fb`](https://github.com/gradio-app/gradio/commit/63d36fbbf4bf6dc909be9a0ffc7b6bf6621d83e8) - Handle gradio apps using `state` in the JS Client.  Thanks @hannahblair!
+
 ## 0.9.0
 
 ### Features

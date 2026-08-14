@@ -5,15 +5,12 @@ current_dir = pathlib.Path(__file__).parent
 
 images = [str(current_dir / "cheetah1.jpeg"), str(current_dir / "cheetah1.jpg"), str(current_dir / "lion.jpg")]
 
-
 img_classifier = gr.load(
     "models/google/vit-base-patch16-224", examples=images, cache_examples=False
 )
 
-
 def func(img, text):
     return img_classifier(img), text
-
 
 using_img_classifier_as_function = gr.Interface(
     func,
@@ -25,6 +22,7 @@ using_img_classifier_as_function = gr.Interface(
         [str(current_dir / "lion.jpg"), "lion"],
     ],
     cache_examples=False,
+    api_name="predict"
 )
 demo = gr.TabbedInterface([using_img_classifier_as_function, img_classifier])
 

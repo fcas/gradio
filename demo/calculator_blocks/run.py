@@ -1,6 +1,5 @@
 import gradio as gr
 
-
 def calculator(num1, operation, num2):
     if operation == "add":
         return num1 + num2
@@ -10,7 +9,6 @@ def calculator(num1, operation, num2):
         return num1 * num2
     elif operation == "divide":
         return num1 / num2
-
 
 with gr.Blocks() as demo:
     with gr.Row():
@@ -23,7 +21,7 @@ with gr.Blocks() as demo:
             result = gr.Number()
 
     submit_btn.click(
-        calculator, inputs=[num_1, operation, num_2], outputs=[result], api_name=False
+        calculator, inputs=[num_1, operation, num_2], outputs=[result], api_visibility="private"
     )
     examples = gr.Examples(
         examples=[
@@ -36,4 +34,4 @@ with gr.Blocks() as demo:
     )
 
 if __name__ == "__main__":
-    demo.launch(show_api=False)
+    demo.launch(footer_links=["gradio"])

@@ -101,8 +101,8 @@ Currently the following checks are run in CI:
 ### functional test
 
 ```
-pip install -r demo/outbreak_forecast/requirements.txt
-pnpm exec playwright install chromium
-pnpm exec playwright install-deps chromium
+pnpm exec playwright install chromium firefox
+pnpm exec playwright install-deps chromium firefox
+pnpm --filter @gradio/utils --filter @gradio/theme package
 pnpm test:browser:full
 ```

@@ -1,18 +1,29 @@
 <script lang="ts">
-	export let label: string | null = null;
-	export let Icon: any;
-	export let show_label = true;
-	export let disable = false;
-	export let float = true;
+	let {
+		label = null,
+		Icon,
+		show_label = true,
+		disable = false,
+		float = true,
+		rtl = false
+	}: {
+		label?: string | null;
+		Icon: any;
+		show_label?: boolean;
+		disable?: boolean;
+		float?: boolean;
+		rtl?: boolean;
+	} = $props();
 </script>
 
+<!-- svelte-ignore a11y_label_has_associated_control -->
 <label
-	for=""
 	class:hide={!show_label}
 	class:sr-only={!show_label}
 	class:float
 	class:hide-label={disable}
 	data-testid="block-label"
+	dir={rtl ? "rtl" : "ltr"}
 >
 	<span>
 		<Icon />
@@ -26,7 +37,8 @@
 		align-items: center;
 		z-index: var(--layer-2);
 		box-shadow: var(--block-label-shadow);
-		border: var(--block-label-border-width) solid var(--border-color-primary);
+		border: var(--block-label-border-width) solid
+			var(--block-label-border-color);
 		border-top: none;
 		border-left: none;
 		border-radius: var(--block-label-radius);
@@ -54,7 +66,7 @@
 	}
 
 	.hide {
-		height: 0;
+		display: none;
 	}
 
 	span {
@@ -68,5 +80,20 @@
 		border-width: 0;
 		background: transparent;
 		overflow: visible;
+	}
+
+	label[dir="rtl"] {
+		border: var(--block-label-border-width) solid
+			var(--block-label-border-color);
+		border-top: none;
+		border-right: none;
+		border-bottom-left-radius: var(--block-radius);
+		border-bottom-right-radius: var(--block-label-radius);
+		border-top-left-radius: var(--block-label-radius);
+	}
+
+	label[dir="rtl"] span {
+		margin-left: var(--size-2);
+		margin-right: 0;
 	}
 </style>
